@@ -1,0 +1,41 @@
+{
+  "properties": {
+    "streamDeclarations": {
+      "Custom-MyFluentBitLogs": {
+        "columns": [
+          {
+            "name": "TimeGenerated",
+            "type": "datetime"
+          },
+          {
+            "name": "SeverityLevel",
+            "type": "string"
+          },
+          {
+            "name": "SyslogMessage",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "destinations": {
+      "logAnalytics": [
+        {
+          "workspaceResourceId": "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.OperationalInsights/workspaces/${WORKSPACE_NAME}",
+          "name": "myworkspace"
+        }
+      ]
+    },
+    "dataFlows": [
+      {
+        "streams": [
+          "Custom-MyFluentBitLogs"
+        ],
+        "destinations": [
+          "myworkspace"
+        ],
+        "outputStream": "Microsoft-Syslog"
+      }
+    ]
+  }
+}
