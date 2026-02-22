@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+set -eo pipefail
+
+BASE_NAME="azure-monitor-test-1"
+CONFIG_DIR="../../azure-resources/$BASE_NAME"
+
+export DCE_URL=$(jq -r '.logsIngestion.endpoint' $CONFIG_DIR/endpoint.json)
+export DCR_ID=$(jq -r '.immutableId' $CONFIG_DIR/dcr.json)
+export TENANT_ID=$(jq -r '.tenant' $CONFIG_DIR/service-principal.json)
+export CLIENT_ID=$(jq -r '.appId' $CONFIG_DIR/service-principal.json)
+export CLIENT_SECRET=$(jq -r '.password' $CONFIG_DIR/service-principal.json)
+
+fluent-bit -c ./fluent-bit.yaml

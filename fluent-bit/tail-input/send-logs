@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+set -eo pipefail
+
+export EVENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.123456789Z")
+export SYSLOG_MESSAGE=$(awk 'BEGIN{srand()} {a[NR]=$0} END{print a[int(rand()*NR)+1]}' /usr/share/dict/words)
+
+envsubst < time-key-test.log.tmpl > time-key-test.log
+
+BASE_NAME="azure-monitor-test-2"
+CONFIG_DIR="../../azure-resources/$BASE_NAME"
+
+export DCE_URL=$(jq -r '.logsIngestion.endpoint' $CONFIG_DIR/endpoint.json)
+export DCR_ID=$(jq -r '.immutableId' $CONFIG_DIR/dcr.json)
+export TENANT_ID=$(jq -r '.tenant' $CONFIG_DIR/service-principal.json)
+export CLIENT_ID=$(jq -r '.appId' $CONFIG_DIR/service-principal.json)
+export CLIENT_SECRET=$(jq -r '.password' $CONFIG_DIR/service-principal.json)
+
+fluent-bit -c ./fluent-bit.yaml
+echo
+echo "Event time: $EVENT_TIME"
+echo "Syslog message: $SYSLOG_MESSAGE"

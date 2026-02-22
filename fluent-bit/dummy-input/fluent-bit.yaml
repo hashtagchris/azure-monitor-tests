@@ -9,11 +9,11 @@ pipeline:
   outputs:
     - name: azure_logs_ingestion
       match: '*'
-      dce_url: https://azure-monitor-test-endpoint-3yjl.centralus-1.ingest.monitor.azure.com
-      dcr_id: dcr-529e1a3b5bd2410bad9dfac0025121f6
       table_name: MyFluentBitLogs
-      tenant_id: 2db1014b-b2df-4add-b943-b48ecac563c6
-      client_id: 6288ce3a-9733-435c-9812-6351b5b32412
+      dce_url: ${DCE_URL}
+      dcr_id: ${DCR_ID}
+      tenant_id: ${TENANT_ID}
+      client_id: ${CLIENT_ID}
       client_secret: ${CLIENT_SECRET}
       time_key: TimeGenerated
       time_generated: true

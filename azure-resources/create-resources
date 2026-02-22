@@ -6,12 +6,16 @@ set -eo pipefail
 # - Remove endpoint creation if it's not needed
 
 export SUBSCRIPTION_ID="21f320bb-0abe-407e-aba8-480d084c058c"
-export RESOURCE_GROUP="azure-monitor-test"
-export WORKSPACE_NAME="azure-monitor-test"
-export ENDPOINT_NAME="azure-monitor-test-endpoint"
-export RULE_NAME="azure-monitor-test-rule"
+export BASE_NAME="azure-monitor-test-1"
+export RESOURCE_GROUP="${BASE_NAME}-rg"
+export WORKSPACE_NAME="${BASE_NAME}-workspace"
+export ENDPOINT_NAME="${BASE_NAME}-endpoint"
+export SP_NAME="${BASE_NAME}-sp"
+export RULE_NAME="${BASE_NAME}-rule"
 export LOCATION="centralus"
-export RESOURCE_GROUP_PORTAL_URL="https://portal.azure.com/#@chrissidigmail.onmicrosoft.com/resource/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/overview"
+export LOGS_QUERY_URL="https://portal.azure.com/#@chrissidigmail.onmicrosoft.com/resource/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.OperationalInsights/workspaces/${WORKSPACE_NAME}/logs"
+
+mkdir -p $BASE_NAME
 
 envsubst < dcr.json.tmpl > dcr.json
 
@@ -31,12 +35,12 @@ echo "Creating log analytics workspace..."
 az monitor log-analytics workspace create --resource-group "$RESOURCE_GROUP" --workspace-name "$WORKSPACE_NAME"
 
 echo "Creating data collection endpoint..."
-az monitor data-collection endpoint create --resource-group "$RESOURCE_GROUP" --name "$ENDPOINT_NAME" --public-network-access "Enabled"
+az monitor data-collection endpoint create --resource-group "$RESOURCE_GROUP" --name "$ENDPOINT_NAME" --public-network-access "Enabled" | tee "$BASE_NAME/endpoint.json"
 
 echo "Creating data collection rule..."
-az monitor data-collection rule create --resource-group "$RESOURCE_GROUP" --rule-name "$RULE_NAME" --data-collection-endpoint-id "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Insights/dataCollectionEndpoints/$ENDPOINT_NAME" --rule-file dcr.json
+az monitor data-collection rule create --resource-group "$RESOURCE_GROUP" --rule-name "$RULE_NAME" --data-collection-endpoint-id "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Insights/dataCollectionEndpoints/$ENDPOINT_NAME" --rule-file dcr.json | tee "$BASE_NAME/dcr.json"
 
 echo "Creating service principal and assigning role..."
-az ad sp create-for-rbac --name fluent-bit-logger --role "Monitoring Metrics Publisher" --scopes "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP"
+az ad sp create-for-rbac --name "$SP_NAME" --role "Monitoring Metrics Publisher" --scopes "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP" | tee "$BASE_NAME/service-principal.json"
 
-open "$RESOURCE_GROUP_PORTAL_URL"
+open "$LOGS_QUERY_URL"

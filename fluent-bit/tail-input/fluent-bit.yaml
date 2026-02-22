@@ -1,0 +1,30 @@
+service:
+  flush: 5
+
+pipeline:
+  inputs:
+    - name: tail
+      # test Fluent Bit's extraction and standardization of the timestamp from the log record
+      path: ./time-key-test.log
+      parser: logfmt-time-key
+      read_from_head: true
+      exit_on_eof: true
+
+  outputs:
+    - name: azure_logs_ingestion
+      match: '*'
+      table_name: MyFluentBitLogs
+      dce_url: ${DCE_URL}
+      dcr_id: ${DCR_ID}
+      tenant_id: ${TENANT_ID}
+      client_id: ${CLIENT_ID}
+      client_secret: ${CLIENT_SECRET}
+      time_key: TimeGenerated
+      time_generated: true
+
+parsers:
+  - name: logfmt-time-key
+    format: logfmt
+    time_key: time
+    time_format: '%Y-%m-%dT%H:%M:%S.%LZ'
+    time_keep: off

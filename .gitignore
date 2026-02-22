@@ -1,1 +1,2 @@
-dcr.json
+azure-resources/**/*.json
+*test.log
