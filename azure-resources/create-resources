@@ -6,7 +6,7 @@ set -eo pipefail
 # - Remove endpoint creation if it's not needed
 
 export SUBSCRIPTION_ID="21f320bb-0abe-407e-aba8-480d084c058c"
-export BASE_NAME="azure-monitor-test-1"
+export BASE_NAME="az-monitor-no-dce-2"
 export RESOURCE_GROUP="${BASE_NAME}-rg"
 export WORKSPACE_NAME="${BASE_NAME}-workspace"
 export ENDPOINT_NAME="${BASE_NAME}-endpoint"
@@ -34,11 +34,16 @@ az group create --resource-group "$RESOURCE_GROUP" --location "$LOCATION"
 echo "Creating log analytics workspace..."
 az monitor log-analytics workspace create --resource-group "$RESOURCE_GROUP" --workspace-name "$WORKSPACE_NAME"
 
-echo "Creating data collection endpoint..."
-az monitor data-collection endpoint create --resource-group "$RESOURCE_GROUP" --name "$ENDPOINT_NAME" --public-network-access "Enabled" | tee "$BASE_NAME/endpoint.json"
+# echo "Creating data collection endpoint..."
+# az monitor data-collection endpoint create --resource-group "$RESOURCE_GROUP" --name "$ENDPOINT_NAME" --public-network-access "Enabled" | tee "$BASE_NAME/endpoint.json"
 
-echo "Creating data collection rule..."
-az monitor data-collection rule create --resource-group "$RESOURCE_GROUP" --rule-name "$RULE_NAME" --data-collection-endpoint-id "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Insights/dataCollectionEndpoints/$ENDPOINT_NAME" --rule-file dcr.json | tee "$BASE_NAME/dcr.json"
+# echo "Creating data collection rule that uses endpoint..."
+# az monitor data-collection rule create --resource-group "$RESOURCE_GROUP" --rule-name "$RULE_NAME" --data-collection-endpoint-id "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Insights/dataCollectionEndpoints/$ENDPOINT_NAME" --rule-file dcr.json | tee "$BASE_NAME/dcr.json"
+
+echo "Creating direct data collection rule..."
+# --kind "Direct" in place of creating and referencing a data collection endpoint
+# endpoints.logsIngestion can be read from the DCR output
+az monitor data-collection rule create --resource-group "$RESOURCE_GROUP" --rule-name "$RULE_NAME" --kind "Direct" --rule-file dcr.json | tee "$BASE_NAME/dcr.json"
 
 echo "Creating service principal and assigning role..."
 az ad sp create-for-rbac --name "$SP_NAME" --role "Monitoring Metrics Publisher" --scopes "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP" | tee "$BASE_NAME/service-principal.json"

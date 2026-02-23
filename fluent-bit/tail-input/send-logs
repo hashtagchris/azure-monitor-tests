@@ -7,10 +7,11 @@ export SYSLOG_MESSAGE=$(awk 'BEGIN{srand()} {a[NR]=$0} END{print a[int(rand()*NR
 
 envsubst < time-key-test.log.tmpl > time-key-test.log
 
-BASE_NAME="azure-monitor-test-2"
+BASE_NAME="az-monitor-no-dce-2"
 CONFIG_DIR="../../azure-resources/$BASE_NAME"
 
-export DCE_URL=$(jq -r '.logsIngestion.endpoint' $CONFIG_DIR/endpoint.json)
+# export DCE_URL=$(jq -r '.logsIngestion.endpoint' $CONFIG_DIR/endpoint.json)
+export DCE_URL=$(jq -r '.endpoints.logsIngestion' $CONFIG_DIR/dcr.json)
 export DCR_ID=$(jq -r '.immutableId' $CONFIG_DIR/dcr.json)
 export TENANT_ID=$(jq -r '.tenant' $CONFIG_DIR/service-principal.json)
 export CLIENT_ID=$(jq -r '.appId' $CONFIG_DIR/service-principal.json)
