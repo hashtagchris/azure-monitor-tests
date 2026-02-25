@@ -8,16 +8,16 @@
             "type": "datetime"
           },
           {
-            "name": "EventTime",
-            "type": "datetime"
-          },
-          {
-            "name": "SeverityLevel",
+            "name": "SeverityText",
             "type": "string"
           },
           {
-            "name": "SyslogMessage",
+            "name": "Body",
             "type": "string"
+          },
+          {
+            "name": "Attributes",
+            "type": "dynamic"
           }
         ]
       }
@@ -38,7 +38,7 @@
         "destinations": [
           "myworkspace"
         ],
-        "outputStream": "Microsoft-Syslog"
+        "outputStream": "Microsoft-OTel-Logs"
       }
     ]
   }

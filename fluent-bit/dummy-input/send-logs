@@ -2,7 +2,7 @@
 
 set -eo pipefail
 
-BASE_NAME="az-monitor-no-dce-2"
+BASE_NAME="az-monitor-otel-logs-2"
 CONFIG_DIR="../../azure-resources/$BASE_NAME"
 
 # export DCE_URL=$(jq -r '.logsIngestion.endpoint' $CONFIG_DIR/endpoint.json)

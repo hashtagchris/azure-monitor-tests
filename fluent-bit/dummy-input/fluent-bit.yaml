@@ -4,7 +4,7 @@ service:
 pipeline:
   inputs:
     - name: dummy
-      dummy: '{"SeverityLevel": "Warning", "SyslogMessage": "warning from dummy input"}'
+      dummy: '{"SeverityText": "Info", "Body": "hello from dummy input", "Attributes": {"key1": "value1", "key2": "value2"}}'
 
   outputs:
     - name: azure_logs_ingestion

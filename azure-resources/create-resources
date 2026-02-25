@@ -2,11 +2,8 @@
 
 set -eo pipefail
 
-# TODO:
-# - Remove endpoint creation if it's not needed
-
 export SUBSCRIPTION_ID="21f320bb-0abe-407e-aba8-480d084c058c"
-export BASE_NAME="az-monitor-no-dce-2"
+export BASE_NAME="az-monitor-otel-logs-2"
 export RESOURCE_GROUP="${BASE_NAME}-rg"
 export WORKSPACE_NAME="${BASE_NAME}-workspace"
 export ENDPOINT_NAME="${BASE_NAME}-endpoint"
