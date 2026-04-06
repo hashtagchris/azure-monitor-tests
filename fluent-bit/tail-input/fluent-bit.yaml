@@ -1,5 +1,6 @@
 service:
   flush: 5
+  log_level: info
 
 pipeline:
   inputs:

@@ -2,8 +2,9 @@
 
 set -eo pipefail
 
-export EVENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.123456789Z")
-export SYSLOG_MESSAGE=$(awk 'BEGIN{srand()} {a[NR]=$0} END{print a[int(rand()*NR)+1]}' /usr/share/dict/words)
+export EVENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.123456712Z")
+# export SYSLOG_MESSAGE=$(awk 'BEGIN{srand()} {a[NR]=$0} END{print a[int(rand()*NR)+1]}' /usr/share/dict/words)
+export SYSLOG_MESSAGE="Stock Fluent Bit"
 
 envsubst < time-key-test.log.tmpl > time-key-test.log
 
