@@ -1,0 +1,42 @@
+{
+  "properties": {
+    "streamDeclarations": {
+      "Custom-MyFluentBitLogs": {
+        "columns": [
+          {
+            "name": "TimeGenerated",
+            "type": "datetime"
+          },
+          {
+            "name": "SeverityText",
+            "type": "string"
+          },
+          {
+            "name": "Body",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "destinations": {
+      "logAnalytics": [
+        {
+          "workspaceResourceId": "/subscriptions/21f320bb-0abe-407e-aba8-480d084c058c/resourceGroups/az-monitor-dcr-tests-rg/providers/Microsoft.OperationalInsights/workspaces/az-monitor-dcr-tests-workspace",
+          "name": "myworkspace"
+        }
+      ]
+    },
+    "dataFlows": [
+      {
+        "streams": [
+          "Custom-MyFluentBitLogs"
+        ],
+        "transformKql": "source | project TimeGenerated, SeverityText, Body, Attributes = bag_pack('TimeGenerated', TimeGenerated, 'SeverityText', SeverityText, 'Body', Body)",
+        "destinations": [
+          "myworkspace"
+        ],
+        "outputStream": "Microsoft-OTel-Logs"
+      }
+    ]
+  }
+}
