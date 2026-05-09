@@ -11,7 +11,7 @@ generate_dummy_json() {
   echo -n "\"SeverityText\": \"Info\", \"Body\": \"hello from ${NUM_ATTRS} attributes test\""
   for i in $(seq 0 "$LAST_INDEX"); do
     name=$(printf "string%04d" "$i")
-    value=$(printf "value_%04d" "$i")
+    value=$(printf "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv_%04d" "$i")
     echo -n ", \"$name\": \"$value\""
   done
   echo -n '}'
