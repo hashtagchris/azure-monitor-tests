@@ -4,7 +4,16 @@ service:
 pipeline:
   inputs:
     - name: dummy
-      dummy: '{"Body": "hello from dummy input via OTLP", "SeverityText": "Info", "TraceId": "5b8efff798038103d269b633813fc60c", "SpanId": "eee19b7ec3c1b173", "key1": "value1", "key2": "value2"}'
+      # Body + plain attributes go in the record. With `logs_body_key_attributes: on`
+      # the body key is removed from the record before remaining fields become OTLP
+      # attributes, so `body` is NOT duplicated.
+      dummy: '{"body": "hello from dummy input via OTLP", "key1": "value1", "key2": "value2"}'
+      # OTLP-specific fields go under the `otlp` metadata key. The plugin reads
+      # $otlp['severity_text'], $otlp['trace_id'], $otlp['span_id'] from metadata
+      # first, and explicitly skips the top-level `otlp` key when packing
+      # remaining metadata as attributes — so these don't show up as attributes.
+      metadata: '{"otlp": {"severity_text": "Info", "trace_id": "5b8efff798038103d269b633813fc60c", "span_id": "eee19b7ec3c1b173"}}'
+      samples: 1
 
   outputs:
     - name: opentelemetry
@@ -15,11 +24,8 @@ pipeline:
       tls.verify: on
       logs_uri: /dataCollectionRules/${DCR_IMMUTABLE_ID}/streams/Microsoft-OTLP-Logs/otlp/v1/logs
 
-      # Map record fields to OTLP LogRecord fields. Anything not mapped becomes
-      # an OTLP attribute on the log record.
-      logs_body_key: Body
-      # SeverityText/TraceId/SpanId match the plugin defaults ($SeverityText/$TraceId/$SpanId), so no
-      # explicit logs_severity_text_message_key/logs_trace_id_message_key/logs_span_id_message_key needed.
+      logs_body_key: body
+      logs_body_key_attributes: on
 
       # Microsoft Entra OAuth 2.0 client-credentials auth.
       # The plugin fetches and refreshes the bearer token automatically.
