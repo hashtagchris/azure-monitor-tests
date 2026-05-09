@@ -1,0 +1,30 @@
+service:
+  flush: 5
+
+pipeline:
+  inputs:
+    - name: dummy
+      dummy: '{"body": "hello from dummy input via OTLP", "severity_text": "Info", "key1": "value1", "key2": "value2"}'
+
+  outputs:
+    - name: opentelemetry
+      match: '*'
+      host: ${LOGS_DCE_HOST}
+      port: 443
+      tls: on
+      tls.verify: on
+      logs_uri: /dataCollectionRules/${DCR_IMMUTABLE_ID}/streams/Microsoft-OTel-Logs/otlp/v1/logs
+
+      # Map record fields to OTLP LogRecord fields. Anything not mapped becomes
+      # an OTLP attribute on the log record.
+      logs_body_key: body
+      logs_severity_text_message_key: severity_text
+
+      # Microsoft Entra OAuth 2.0 client-credentials auth.
+      # The plugin fetches and refreshes the bearer token automatically.
+      oauth2.enable: true
+      oauth2.token_url: https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token
+      oauth2.client_id: ${CLIENT_ID}
+      oauth2.client_secret: ${CLIENT_SECRET}
+      oauth2.scope: https://monitor.azure.com/.default
+      oauth2.auth_method: post

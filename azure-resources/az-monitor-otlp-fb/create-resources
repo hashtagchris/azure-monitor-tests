@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+
+set -eo pipefail
+
+# Provisions Azure resources for testing Fluent Bit's `opentelemetry` output
+# against Azure Monitor's native OTLP log ingestion (preview).
+#
+# Creates: resource group, Log Analytics workspace, DCE + DCR (via ARM template
+# in this directory), service principal scoped to the DCR with
+# `Monitoring Metrics Publisher`. Persists dcr.json, dce.json, and
+# service-principal.json next to this script for the Fluent Bit configs to
+# consume.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+export SUBSCRIPTION_ID="21f320bb-0abe-407e-aba8-480d084c058c"
+export BASE_NAME="az-monitor-otlp-fb"
+export RESOURCE_GROUP="${BASE_NAME}-rg"
+export WORKSPACE_NAME="${BASE_NAME}-workspace"
+export DCE_NAME="${BASE_NAME}-dce"
+export DCR_NAME="${BASE_NAME}-dcr"
+export SP_NAME="${BASE_NAME}-sp"
+export LOCATION="centralus"
+export LOGS_QUERY_URL="https://portal.azure.com/#@chrissidigmail.onmicrosoft.com/resource/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.OperationalInsights/workspaces/${WORKSPACE_NAME}/logs"
+
+echo "Checking login status..."
+az account show > /dev/null || { echo "Not logged in. Please run 'az login'."; exit 1; }
+
+az account set --subscription "$SUBSCRIPTION_ID"
+
+echo "Registering OTLP preview feature on Microsoft.Insights..."
+az feature register --name OtlpApplicationInsights --namespace Microsoft.Insights >/dev/null
+az provider register -n Microsoft.Insights >/dev/null
+
+az extension add --name monitor-control-service --only-show-errors >/dev/null
+
+echo "Creating resource group..."
+az group create --resource-group "$RESOURCE_GROUP" --location "$LOCATION" >/dev/null
+
+echo "Creating log analytics workspace..."
+WORKSPACE_RESOURCE_ID=$(az monitor log-analytics workspace create \
+  --resource-group "$RESOURCE_GROUP" \
+  --workspace-name "$WORKSPACE_NAME" \
+  --query id -o tsv)
+
+echo "Deploying DCE + DCR via ARM template..."
+DEPLOYMENT_NAME="${BASE_NAME}-deploy-$(date +%s)"
+az deployment group create \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "$DEPLOYMENT_NAME" \
+  --template-file arm-template.json \
+  --parameters \
+    dataCollectionRuleName="$DCR_NAME" \
+    dataCollectionEndpointName="$DCE_NAME" \
+    location="$LOCATION" \
+    logAnalyticsWorkspaceResourceId="$WORKSPACE_RESOURCE_ID" >/dev/null
+
+echo "Persisting DCE and DCR JSON..."
+az monitor data-collection endpoint show \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "$DCE_NAME" | tee dce.json >/dev/null
+
+az monitor data-collection rule show \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "$DCR_NAME" | tee dcr.json >/dev/null
+
+DCR_RESOURCE_ID=$(jq -r '.id' dcr.json)
+
+echo "Creating service principal scoped to the DCR with Monitoring Metrics Publisher..."
+az ad sp create-for-rbac \
+  --name "$SP_NAME" \
+  --role "Monitoring Metrics Publisher" \
+  --scopes "$DCR_RESOURCE_ID" | tee service-principal.json >/dev/null
+
+echo "Done."
+echo "Logs query URL: $LOGS_QUERY_URL"
+open "$LOGS_QUERY_URL" 2>/dev/null || true

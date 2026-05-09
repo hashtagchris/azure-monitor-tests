@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+set -eo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+CONFIG_DIR="../../../azure-resources/az-monitor-otlp-fb"
+
+# Extract host from the DCE logsIngestion URL (strip scheme + trailing slash).
+LOGS_DCE_URL=$(jq -r '.logsIngestion.endpoint' "$CONFIG_DIR/dce.json")
+export LOGS_DCE_HOST=$(printf '%s' "$LOGS_DCE_URL" | sed -E 's#^https?://##; s#/$##')
+
+export DCR_IMMUTABLE_ID=$(jq -r '.immutableId' "$CONFIG_DIR/dcr.json")
+export TENANT_ID=$(jq -r '.tenant' "$CONFIG_DIR/service-principal.json")
+export CLIENT_ID=$(jq -r '.appId' "$CONFIG_DIR/service-principal.json")
+export CLIENT_SECRET=$(jq -r '.password' "$CONFIG_DIR/service-principal.json")
+
+fluent-bit -c ./fluent-bit.yaml
