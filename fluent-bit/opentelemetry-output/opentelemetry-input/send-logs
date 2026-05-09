@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+
+set -eo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+CONFIG_DIR="../../../azure-resources/az-monitor-otlp-fb"
+
+LOGS_DCE_URL=$(jq -r '.logsIngestion.endpoint' "$CONFIG_DIR/dce.json")
+export LOGS_DCE_HOST=$(printf '%s' "$LOGS_DCE_URL" | sed -E 's#^https?://##; s#/$##')
+
+export DCR_IMMUTABLE_ID=$(jq -r '.immutableId' "$CONFIG_DIR/dcr.json")
+export TENANT_ID=$(jq -r '.tenant' "$CONFIG_DIR/service-principal.json")
+export CLIENT_ID=$(jq -r '.appId' "$CONFIG_DIR/service-principal.json")
+export CLIENT_SECRET=$(jq -r '.password' "$CONFIG_DIR/service-principal.json")
+
+# Render payload with current timestamp (nanoseconds).
+TIME_UNIX_NANO=$(python3 -c 'import time; print(int(time.time() * 1_000_000_000))')
+sed "s/__TIME_UNIX_NANO__/${TIME_UNIX_NANO}/" payload.json.tmpl > payload.json
+
+# Start Fluent Bit in the background; the opentelemetry input doesn't have
+# an exit-on-eof, so we manage its lifetime manually.
+fluent-bit -c ./fluent-bit.yaml &
+FB_PID=$!
+trap 'kill ${FB_PID} 2>/dev/null || true' EXIT
+
+# Wait for the OTLP HTTP listener to be ready.
+for _ in $(seq 1 50); do
+    if curl -sS -o /dev/null -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data '{}' \
+            http://127.0.0.1:4318/v1/logs | grep -qE '^(200|201|204|400)$'; then
+        break
+    fi
+    sleep 0.1
+done
+
+# Send the OTLP log payload.
+curl -sS -X POST -H 'Content-Type: application/json' \
+     --data @payload.json \
+     -w '\nOTLP input HTTP status: %{http_code}\n' \
+     http://127.0.0.1:4318/v1/logs
+
+# Give Fluent Bit time to flush to Azure Monitor before shutting it down.
+sleep 5
+
+kill ${FB_PID} 2>/dev/null || true
+wait ${FB_PID} 2>/dev/null || true

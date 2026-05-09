@@ -1,0 +1,32 @@
+service:
+  flush: 1
+
+pipeline:
+  inputs:
+    - name: opentelemetry
+      listen: 127.0.0.1
+      port: 4318
+      # Wrap stringValue/scalar bodies under `body` so the same
+      # logs_body_key + logs_body_key_attributes config used by the
+      # dummy-input test works downstream.
+      logs_body_key: body
+
+  outputs:
+    - name: opentelemetry
+      match: '*'
+      host: ${LOGS_DCE_HOST}
+      port: 443
+      tls: on
+      tls.verify: on
+      logs_uri: /dataCollectionRules/${DCR_IMMUTABLE_ID}/streams/Microsoft-OTLP-Logs/otlp/v1/logs
+
+      logs_body_key: body
+      logs_body_key_attributes: on
+
+      # Microsoft Entra OAuth 2.0 client-credentials auth.
+      oauth2.enable: true
+      oauth2.token_url: https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token
+      oauth2.client_id: ${CLIENT_ID}
+      oauth2.client_secret: ${CLIENT_SECRET}
+      oauth2.scope: https://monitor.azure.com/.default
+      oauth2.auth_method: post
