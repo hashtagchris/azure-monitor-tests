@@ -13,7 +13,7 @@ pipeline:
       port: 443
       tls: on
       tls.verify: on
-      logs_uri: /dataCollectionRules/${DCR_IMMUTABLE_ID}/streams/Microsoft-OTel-Logs/otlp/v1/logs
+      logs_uri: /dataCollectionRules/${DCR_IMMUTABLE_ID}/streams/Microsoft-OTLP-Logs/otlp/v1/logs
 
       # Map record fields to OTLP LogRecord fields. Anything not mapped becomes
       # an OTLP attribute on the log record.
