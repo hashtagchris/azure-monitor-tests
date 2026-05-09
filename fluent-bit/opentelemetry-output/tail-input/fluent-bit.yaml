@@ -8,6 +8,35 @@ pipeline:
       parser: json-otlp
       read_from_head: true
       exit_on_eof: true
+      # Tail writes parsed fields into the record body, not chunk metadata.
+      # Use content_modifier to populate top-level metadata keys that
+      # out_opentelemetry reads by default via its `logs_*_metadata_key`
+      # record accessors ($SeverityText, $TraceId, $SpanId). This produces
+      # the same OTLP log record fields as the dummy-input test.
+      #
+      # Caveat vs the dummy-input test: dummy puts these fields under
+      # `metadata.otlp.*`, which out_opentelemetry explicitly skips when
+      # packing remaining metadata as OTLP attributes. content_modifier
+      # only writes flat keys, so SeverityText/TraceId/SpanId also end up
+      # in the OTLP attributes list. Removing the duplicates would require
+      # a Lua filter (or upstream support for nested metadata writes).
+      processors:
+        logs:
+          - name: content_modifier
+            context: metadata
+            action: insert
+            key: SeverityText
+            value: Info
+          - name: content_modifier
+            context: metadata
+            action: insert
+            key: TraceId
+            value: 5b8efff798038103d269b633813fc60c
+          - name: content_modifier
+            context: metadata
+            action: insert
+            key: SpanId
+            value: eee19b7ec3c1b173
 
   outputs:
     - name: opentelemetry
@@ -33,10 +62,6 @@ pipeline:
       oauth2.scope: https://monitor.azure.com/.default
       oauth2.auth_method: post
 
-# NOTE: OTLP-specific fields (severity_text, trace_id, span_id) live under the
-# `otlp` metadata key in the dummy-input test. The tail input doesn't set
-# record metadata from parsed fields, so those fields are omitted here. The
-# body + attributes shape matches the dummy-input test.
 parsers:
   - name: json-otlp
     format: json
