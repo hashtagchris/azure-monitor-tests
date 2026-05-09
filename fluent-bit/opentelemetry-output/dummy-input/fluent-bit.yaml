@@ -4,7 +4,7 @@ service:
 pipeline:
   inputs:
     - name: dummy
-      dummy: '{"body": "hello from dummy input via OTLP", "severity_text": "Info", "key1": "value1", "key2": "value2"}'
+      dummy: '{"Body": "hello from dummy input via OTLP", "SeverityText": "Info", "TraceId": "5b8efff798038103d269b633813fc60c", "SpanId": "eee19b7ec3c1b173", "key1": "value1", "key2": "value2"}'
 
   outputs:
     - name: opentelemetry
@@ -17,8 +17,9 @@ pipeline:
 
       # Map record fields to OTLP LogRecord fields. Anything not mapped becomes
       # an OTLP attribute on the log record.
-      logs_body_key: body
-      logs_severity_text_message_key: severity_text
+      logs_body_key: Body
+      # SeverityText/TraceId/SpanId match the plugin defaults ($SeverityText/$TraceId/$SpanId), so no
+      # explicit logs_severity_text_message_key/logs_trace_id_message_key/logs_span_id_message_key needed.
 
       # Microsoft Entra OAuth 2.0 client-credentials auth.
       # The plugin fetches and refreshes the bearer token automatically.
