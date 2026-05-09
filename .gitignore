@@ -1,3 +1,4 @@
 azure-resources/**/*.json
 *test.log
 fluent-bit/**/payload.json
+fluent-bit/opentelemetry-output/zap-input/zap-input
