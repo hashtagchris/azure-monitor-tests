@@ -59,9 +59,15 @@ func main() {
 	// Attach OTel attributes to every record, regardless of the output target.
 	// Alternative: See the resource attributes in buildLogger() for attributes that are attached to every record only when using the OTLP output.
 	logger = logger.With(
-		zap.String(string(semconv.ClientAddressKey), "24.211.200.42"),
+		// user_agent.original - ingested into OTelLogs.ClientBrowser and OTelLogs.Attributes
 		zap.String(string(semconv.UserAgentOriginalKey), "test-zap-input/1.0"),
+		// k8s.pod.name - ingested into OTelLogs.K8sPodName and OTelLogs.Attributes
 		zap.String(string(semconv.K8SPodNameKey), "two-peas"),
+		// k8s.container.name - ingested into OTelLogs.K8SContainerName and OTelLogs.Attributes
+		zap.String(string(semconv.K8SContainerNameKey), "primary-pea"),
+
+		// client.address - ingested into OTelLogs.Client*, but not duplicated in OTelLog.Attributes 🎉
+		zap.String(string(semconv.ClientAddressKey), "24.211.200.42"),
 	)
 	logger = logger.With(traceFields(*output)...)
 
@@ -117,7 +123,8 @@ func traceFields(output string) []zap.Field {
 	}
 }
 
-func buildLogger(output string) (*zap.Logger, func(), error) {	switch output {
+func buildLogger(output string) (*zap.Logger, func(), error) {
+	switch output {
 	case "stdout":
 		cfg := zap.NewProductionConfig()
 		cfg.OutputPaths = []string{"stdout"}
