@@ -28,6 +28,7 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -36,6 +37,8 @@ const (
 	otlpEndpoint = "127.0.0.1:4318"
 	serviceName  = "zap-input-test"
 	scopeVersion = "0.1.0"
+	traceIDHex   = "5b8efff798038103d269b633813fc60c"
+	spanIDHex    = "eee19b7ec3c1b173"
 )
 
 func main() {
@@ -60,6 +63,7 @@ func main() {
 		zap.String(string(semconv.UserAgentOriginalKey), "test-zap-input/1.0"),
 		zap.String(string(semconv.K8SPodNameKey), "two-peas"),
 	)
+	logger = logger.With(traceFields(*output)...)
 
 	logger.Info("hello from zap via OTLP",
 		zap.String("key1", "value1"),
@@ -76,8 +80,44 @@ func main() {
 	log.Printf("emitted 3 zap log records via %s; flushing...", *output)
 }
 
-func buildLogger(output string) (*zap.Logger, func(), error) {
-	switch output {
+// traceCtx is a Go context carrying a fixed test SpanContext. The otelzap
+// bridge picks up a context.Context attached via zap.Reflect and uses it
+// when emitting OTLP log records, so the embedded TraceID/SpanID end up
+// on the OTLP log record itself (not as attributes).
+var traceCtx = func() context.Context {
+	tid, err := trace.TraceIDFromHex(traceIDHex)
+	if err != nil {
+		log.Fatalf("parse trace id: %v", err)
+	}
+	sid, err := trace.SpanIDFromHex(spanIDHex)
+	if err != nil {
+		log.Fatalf("parse span id: %v", err)
+	}
+	sc := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    tid,
+		SpanID:     sid,
+		TraceFlags: trace.FlagsSampled,
+		Remote:     true,
+	})
+	return trace.ContextWithSpanContext(context.Background(), sc)
+}()
+
+// traceFields returns the per-record fields used to surface the test
+// TraceID/SpanID. For OTLP they ride along inside a context.Context that
+// the otelzap bridge unwraps, lifting them to the OTLP record's
+// TraceId/SpanId fields. For stdout/logfmt we emit them as ordinary
+// string fields so they're visible in the output.
+func traceFields(output string) []zap.Field {
+	if output == "otlp" {
+		return []zap.Field{zap.Reflect("ctx", traceCtx)}
+	}
+	return []zap.Field{
+		zap.String("trace_id", traceIDHex),
+		zap.String("span_id", spanIDHex),
+	}
+}
+
+func buildLogger(output string) (*zap.Logger, func(), error) {	switch output {
 	case "stdout":
 		cfg := zap.NewProductionConfig()
 		cfg.OutputPaths = []string{"stdout"}
