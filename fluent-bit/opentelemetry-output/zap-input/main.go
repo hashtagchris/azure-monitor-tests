@@ -1,16 +1,16 @@
 // Sends a few test log records via Uber's zap logger. The output target
 // is selectable via the -output flag:
 //
-//   -output otlp    (default) Bridge zap to the OpenTelemetry Go SDK's
-//                   OTLP/HTTP log exporter, sending to Fluent Bit's
-//                   opentelemetry input on 127.0.0.1:4318. Run
-//                   ./start-fluent-bit in another shell first.
+//	-output otlp    (default) Bridge zap to the OpenTelemetry Go SDK's
+//	                OTLP/HTTP log exporter, sending to Fluent Bit's
+//	                opentelemetry input on 127.0.0.1:4318. Run
+//	                ./start-fluent-bit in another shell first.
 //
-//   -output stdout  Use a plain zap production logger that writes JSON
-//                   log lines directly to stdout (no OTLP, no network).
+//	-output stdout  Use a plain zap production logger that writes JSON
+//	                log lines directly to stdout (no OTLP, no network).
 //
-//   -output logfmt  Write logfmt-formatted lines to stdout, using the
-//                   github.com/jsternberg/zap-logfmt encoder.
+//	-output logfmt  Write logfmt-formatted lines to stdout, using the
+//	                github.com/jsternberg/zap-logfmt encoder.
 package main
 
 import (
@@ -51,6 +51,14 @@ func main() {
 			shutdown()
 		}
 	}()
+
+	// Attach OTel attributes to every record, regardless of the output target.
+	// Alternative: See the resource attributes in buildLogger() for attributes that are attached to every record only when using the OTLP output.
+	logger = logger.With(
+		zap.String(string(semconv.ClientAddressKey), "24.211.200.42"),
+		zap.String(string(semconv.UserAgentOriginalKey), "test-zap-input/1.0"),
+		zap.String(string(semconv.K8SPodNameKey), "two-peas"),
+	)
 
 	logger.Info("hello from zap via OTLP",
 		zap.String("key1", "value1"),
@@ -100,7 +108,17 @@ func buildLogger(output string) (*zap.Logger, func(), error) {
 		res, err := resource.Merge(
 			resource.Default(),
 			resource.NewWithAttributes(semconv.SchemaURL,
+				// service.name
 				semconv.ServiceName(serviceName),
+
+				// service.version
+				semconv.ServiceVersion("0.0.1"),
+
+				// service.namespace
+				semconv.ServiceNamespace("test-namespace"),
+
+				// deployment.environment.name
+				semconv.DeploymentEnvironmentName("test"),
 			),
 		)
 		if err != nil {
