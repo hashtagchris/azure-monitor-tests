@@ -8,6 +8,17 @@ pipeline:
       port: 4318
 
   outputs:
+    # debug output
+    # stdout includes metadata and group attributes
+    - name: stdout
+      match: '*'
+
+    # debug output
+    # file output does not include metadata and group attributes
+    # you'll only find the timestamp and the log message in the output
+    - name: file
+      match: '*'
+
     - name: opentelemetry
       match: '*'
       host: ${LOGS_DCE_HOST}
