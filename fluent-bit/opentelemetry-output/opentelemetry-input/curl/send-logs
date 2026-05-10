@@ -5,7 +5,7 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-CONFIG_DIR="../../../azure-resources/az-monitor-otlp-fb"
+CONFIG_DIR="../../../../azure-resources/az-monitor-otlp-fb"
 
 LOGS_DCE_URL=$(jq -r '.logsIngestion.endpoint' "$CONFIG_DIR/dce.json")
 export LOGS_DCE_HOST=$(printf '%s' "$LOGS_DCE_URL" | sed -E 's#^https?://##; s#/$##')
