@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aks-otel-zap
+  namespace: aks-otel-zap
+  labels:
+    app.kubernetes.io/name: aks-otel-zap
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aks-otel-zap
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aks-otel-zap
+      annotations:
+        # Tell the AKS Application Monitoring addon to capture stdout-style
+        # application logs in addition to the OTLP logs we ship ourselves.
+        # Safe to remove; we ship logs via OTLP regardless.
+        monitor.azure.com/enable-application-logs: "true"
+    spec:
+      containers:
+        - name: app
+          image: ACR_LOGIN_SERVER/aks-otel-zap:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+            # Resource attributes consumed by resource.WithFromEnv() in the Go
+            # service. service.name is also set in code; this enriches it
+            # with k8s.* identifiers.
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.namespace=aks-otel-zap,k8s.pod.name=$(POD_NAME),k8s.namespace.name=$(POD_NAMESPACE),k8s.node.name=$(NODE_NAME),k8s.deployment.name=aks-otel-zap"
+            # NOTE: OTEL_EXPORTER_OTLP_ENDPOINT (and friends) are injected by
+            # the AKS Application Monitoring addon when the namespace has an
+            # Instrumentation CR. Do not hardcode them here.
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits:   { cpu: 500m, memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aks-otel-zap
+  namespace: aks-otel-zap
+spec:
+  selector:
+    app.kubernetes.io/name: aks-otel-zap
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  type: ClusterIP

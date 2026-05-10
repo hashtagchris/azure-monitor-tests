@@ -1,0 +1,16 @@
+# Autoconfiguration mode: empty autoInstrumentationPlatforms means the AKS
+# Application Monitoring addon will NOT inject any SDK; it will only inject
+# OTEL_EXPORTER_OTLP_* env vars into pods in this namespace so our own
+# OpenTelemetry SDK (in the Go service) exports telemetry to Application
+# Insights.
+apiVersion: monitor.azure.com/v1
+kind: Instrumentation
+metadata:
+  name: default
+  namespace: aks-otel-zap
+spec:
+  settings:
+    autoInstrumentationPlatforms: []
+  destination:
+    # Replace via 30-onboard-namespace.sh (envsubst from infra/appinsights.json).
+    applicationInsightsConnectionString: "${APPLICATIONINSIGHTS_CONNECTION_STRING}"

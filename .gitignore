@@ -2,3 +2,11 @@ azure-resources/**/*.json
 *test.log
 fluent-bit/**/payload.json
 fluent-bit/opentelemetry-output/zap-input/zap-input
+
+# aks-otel-zap: captured AppInsights resource (contains ConnectionString +
+# InstrumentationKey — write credentials for the AppInsights resource).
+aks-otel-zap/infra/appinsights.json
+# aks-otel-zap: rendered manifests (build output, contains resolved ACR image refs).
+aks-otel-zap/k8s/*.rendered.yaml
+# aks-otel-zap: local Go build output (the produced binary's name matches its directory: "app").
+aks-otel-zap/app/app
