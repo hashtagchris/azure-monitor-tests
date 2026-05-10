@@ -35,6 +35,7 @@ import (
 const (
 	otlpEndpoint = "127.0.0.1:4318"
 	serviceName  = "zap-input-test"
+	scopeVersion = "0.1.0"
 )
 
 func main() {
@@ -139,7 +140,9 @@ func buildLogger(output string) (*zap.Logger, func(), error) {
 			}
 		}
 
-		return zap.New(otelzap.NewCore(serviceName)), shutdown, nil
+		return zap.New(otelzap.NewCore(serviceName,
+			otelzap.WithVersion(scopeVersion),
+		)), shutdown, nil
 
 	default:
 		fmt.Fprintf(os.Stderr, "unknown -output %q (expected 'otlp', 'stdout', or 'logfmt')\n", output)
