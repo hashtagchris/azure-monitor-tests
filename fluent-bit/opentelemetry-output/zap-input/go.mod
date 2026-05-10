@@ -3,6 +3,7 @@ module github.com/hashtagchris/azure-monitor-tests/fluent-bit/opentelemetry-outp
 go 1.26.3
 
 require (
+	github.com/jsternberg/zap-logfmt v1.3.0
 	go.opentelemetry.io/contrib/bridges/otelzap v0.18.0
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.19.0

@@ -8,6 +8,9 @@
 //
 //   -output stdout  Use a plain zap production logger that writes JSON
 //                   log lines directly to stdout (no OTLP, no network).
+//
+//   -output logfmt  Write logfmt-formatted lines to stdout, using the
+//                   github.com/jsternberg/zap-logfmt encoder.
 package main
 
 import (
@@ -18,6 +21,7 @@ import (
 	"os"
 	"time"
 
+	logfmt "github.com/jsternberg/zap-logfmt"
 	"go.opentelemetry.io/contrib/bridges/otelzap"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/log/global"
@@ -25,6 +29,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -33,7 +38,7 @@ const (
 )
 
 func main() {
-	output := flag.String("output", "otlp", "log output target: 'otlp' or 'stdout'")
+	output := flag.String("output", "otlp", "log output target: 'otlp', 'stdout', or 'logfmt'")
 	flag.Parse()
 
 	logger, shutdown, err := buildLogger(*output)
@@ -74,6 +79,13 @@ func buildLogger(output string) (*zap.Logger, func(), error) {
 		}
 		return logger, nil, nil
 
+	case "logfmt":
+		encCfg := zap.NewProductionEncoderConfig()
+		encCfg.EncodeTime = zapcore.ISO8601TimeEncoder
+		encoder := logfmt.NewEncoder(encCfg)
+		core := zapcore.NewCore(encoder, zapcore.Lock(os.Stdout), zapcore.DebugLevel)
+		return zap.New(core, zap.AddCaller()), nil, nil
+
 	case "otlp":
 		ctx := context.Background()
 
@@ -112,7 +124,7 @@ func buildLogger(output string) (*zap.Logger, func(), error) {
 		return zap.New(otelzap.NewCore(serviceName)), shutdown, nil
 
 	default:
-		fmt.Fprintf(os.Stderr, "unknown -output %q (expected 'otlp' or 'stdout')\n", output)
+		fmt.Fprintf(os.Stderr, "unknown -output %q (expected 'otlp', 'stdout', or 'logfmt')\n", output)
 		flag.Usage()
 		os.Exit(2)
 		return nil, nil, nil
