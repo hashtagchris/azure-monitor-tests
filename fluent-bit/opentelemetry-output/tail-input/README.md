@@ -3,12 +3,12 @@ Starting from a tail input, there doesn't seem to be a good way to extract and s
 ### Resource Attributes
 Not an exhaustive list, but these may be significant to Azure Monitor
 
-- `deployment.environment.name`
 - `deployment.environment`
-- `service.namespace`
-- `service.name`
+- `deployment.environment.name`
 - `service.instance.id`
-- `telemetry.sdk.name`
-- `telemetry.sdk.language`
-- `telemetry.sdk.version`
+- `service.name`
+- `service.namespace`
 - `service.version`
+- `telemetry.sdk.language`
+- `telemetry.sdk.name`
+- `telemetry.sdk.version`
