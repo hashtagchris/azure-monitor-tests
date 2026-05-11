@@ -7,6 +7,17 @@ pipeline:
       listen: 127.0.0.1
       port: 4318
 
+  filters:
+    # log seems to be the only key set
+    # everything else is metadata and group attributes
+    # it's not possible to match service.name, severity_text, etc
+    - name: rewrite_tag
+      match: 'v1_logs'
+      rule: $log . $log false
+      emitter_name: re_emitted
+
+  # TODO: add multiple opentelemetry outputs with different destinations,
+  # once we get rewrite_tag working in a way that's useful
   outputs:
     # debug output
     # stdout includes metadata and group attributes
