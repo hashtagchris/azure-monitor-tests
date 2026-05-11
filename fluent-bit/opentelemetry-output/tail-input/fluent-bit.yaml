@@ -46,6 +46,26 @@ pipeline:
       oauth2.scope: https://monitor.azure.com/.default
       oauth2.auth_method: post
 
+      # This may be the only way to add resource attributes to tail input records
+      processors:
+        logs:
+          # The tail input emits flat records without an OTLP group. The
+          # content_modifier processor with context: otel_resource_attributes
+          # only mutates GROUP_START records, so we first wrap records in an
+          # OTLP envelope (empty resource + scope) and then write the
+          # resource attributes into it.
+          - name: opentelemetry_envelope
+          - name: content_modifier
+            context: otel_resource_attributes
+            action: upsert
+            key: res-attr1
+            value: value1
+          - name: content_modifier
+            context: otel_resource_attributes
+            action: upsert
+            key: res-attr2
+            value: value2
+
 parsers:
   - name: json-otlp
     format: json
