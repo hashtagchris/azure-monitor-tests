@@ -8,16 +8,18 @@ pipeline:
       port: 4318
 
   filters:
-    # log seems to be the only key set
-    # everything else is metadata and group attributes
-    # it's not possible to match service.name, severity_text, etc
+    # copy the service.name group attribute to a key called service_name in the record
+    - name: lua
+      match: '*'
+      script: add_routing_key.lua
+      call: add_routing_key
+
+    # rewrite the tag so that we can route to different outputs based on the service_name
     - name: rewrite_tag
       match: 'v1_logs'
-      rule: $log . $log false
+      rule: $service_name . $service_name false
       emitter_name: re_emitted
 
-  # TODO: add multiple opentelemetry outputs with different destinations,
-  # once we get rewrite_tag working in a way that's useful
   outputs:
     # debug output
     # stdout includes metadata and group attributes
@@ -30,8 +32,9 @@ pipeline:
     - name: file
       match: '*'
 
+    # TODO: add a second output to a different destination
     - name: opentelemetry
-      match: '*'
+      match: 'zap-input-test'
       host: ${LOGS_DCE_HOST}
       port: 443
       tls: on
