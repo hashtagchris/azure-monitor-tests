@@ -83,7 +83,7 @@ Every Auxiliary and Analytics table uses this schema:
 
 | Column | Type |
 | --- | --- |
-| `TimeGenerated` | `dateTime` |
+| `TimeGenerated` | `datetime` |
 | `RequestID` | `string` |
 | `TableName` | `string` |
 | `Message` | `string` |

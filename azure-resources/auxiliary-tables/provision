@@ -29,7 +29,7 @@ table_payload() {
         schema: {
           name: $table_name,
           columns: [
-            { name: "TimeGenerated", type: "dateTime" },
+            { name: "TimeGenerated", type: "datetime" },
             { name: "RequestID", type: "string" },
             { name: "TableName", type: "string" },
             { name: "Message", type: "string" },
@@ -67,7 +67,7 @@ dcr_payload() {
     --argjson tables "$tables_json" \
     '
     def columns: [
-      { name: "TimeGenerated", type: "dateTime" },
+      { name: "TimeGenerated", type: "datetime" },
       { name: "RequestID", type: "string" },
       { name: "TableName", type: "string" },
       { name: "Message", type: "string" },
