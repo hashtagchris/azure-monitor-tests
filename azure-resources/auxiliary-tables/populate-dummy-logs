@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing required command: $1" >&2
+    exit 1
+  fi
+}
+
+get_access_token() {
+  local tenant_id="$1"
+  local client_id="$2"
+  local client_secret="$3"
+  local token_response
+
+  token_response="$(curl --fail-with-body -sS \
+    --request POST "https://login.microsoftonline.com/${tenant_id}/oauth2/v2.0/token" \
+    --header "Content-Type: application/x-www-form-urlencoded" \
+    --data-urlencode "client_id=${client_id}" \
+    --data-urlencode "client_secret=${client_secret}" \
+    --data-urlencode "scope=https://monitor.azure.com/.default" \
+    --data-urlencode "grant_type=client_credentials")"
+
+  jq -r '.access_token' <<< "$token_response"
+}
+
+stream_name_for_table() {
+  local table_name="$1"
+  echo "Custom-${table_name%_CL}"
+}
+
+generate_request_ids() {
+  local count="$1"
+
+  REQUEST_IDS=()
+
+  for ((sequence_number = 1; sequence_number <= count; sequence_number++)); do
+    REQUEST_IDS+=("$(uuidgen | tr '[:upper:]' '[:lower:]')")
+  done
+}
+
+write_payload() {
+  local output_path="$1"
+  local workspace_name="$2"
+  local table_name="$3"
+  local first_sequence="$4"
+  local batch_count="$5"
+  local jsonl_path="${output_path}.jsonl"
+
+  : > "$jsonl_path"
+
+  for ((offset = 0; offset < batch_count; offset++)); do
+    sequence_number=$((first_sequence + offset))
+    request_id="${REQUEST_IDS[$((sequence_number - 1))]:-}"
+    timestamp="$(date -u +"%Y-%m-%dT%H:%M:%S.000000Z")"
+
+    if [[ -z "$request_id" ]]; then
+      echo "Missing shared RequestID for sequence number $sequence_number." >&2
+      exit 1
+    fi
+
+    jq -n \
+      --arg timeGenerated "$timestamp" \
+      --arg requestId "$request_id" \
+      --arg tableName "$table_name" \
+      --arg message "Dummy log ${sequence_number} for ${workspace_name}/${table_name}" \
+      --arg severityText "Info" \
+      --arg source "populate-dummy-logs" \
+      --argjson sequenceNumber "$sequence_number" \
+      '{
+        TimeGenerated: $timeGenerated,
+        RequestID: $requestId,
+        TableName: $tableName,
+        Message: $message,
+        SeverityText: $severityText,
+        Source: $source,
+        SequenceNumber: $sequenceNumber
+      }' >> "$jsonl_path"
+  done
+
+  jq -s '.' "$jsonl_path" > "$output_path"
+  rm -f "$jsonl_path"
+}
+
+post_payload() {
+  local token="$1"
+  local endpoint="$2"
+  local dcr_immutable_id="$3"
+  local stream_name="$4"
+  local payload_path="$5"
+  local uri
+
+  endpoint="${endpoint%/}"
+  uri="${endpoint}/dataCollectionRules/${dcr_immutable_id}/streams/${stream_name}?api-version=${INGEST_API_VERSION}"
+
+  curl --fail-with-body -sS \
+    --request POST "$uri" \
+    --header "Authorization: Bearer ${token}" \
+    --header "Content-Type: application/json" \
+    --data-binary "@${payload_path}" >/dev/null
+}
+
+require_cmd curl
+require_cmd jq
+require_cmd uuidgen
+
+ARTIFACT_DIR="${ARTIFACT_DIR:-$SCRIPT_DIR/az-monitor-aux-tables}"
+CONFIG_PATH="${CONFIG_PATH:-$ARTIFACT_DIR/config.json}"
+SERVICE_PRINCIPAL_PATH="${SERVICE_PRINCIPAL_PATH:-$ARTIFACT_DIR/service-principal.json}"
+ROWS_PER_TABLE="${ROWS_PER_TABLE:-10}"
+BATCH_SIZE="${BATCH_SIZE:-100}"
+INGEST_API_VERSION="${INGEST_API_VERSION:-2023-01-01}"
+REQUEST_IDS=()
+
+if [[ ! -f "$CONFIG_PATH" ]]; then
+  echo "Missing config file: $CONFIG_PATH" >&2
+  echo "Run ./provision first or set CONFIG_PATH." >&2
+  exit 1
+fi
+
+if [[ ! -f "$SERVICE_PRINCIPAL_PATH" ]]; then
+  echo "Missing service principal file: $SERVICE_PRINCIPAL_PATH" >&2
+  echo "Run ./provision first or set SERVICE_PRINCIPAL_PATH." >&2
+  exit 1
+fi
+
+tenant_id="$(jq -r '.tenant' "$SERVICE_PRINCIPAL_PATH")"
+client_id="$(jq -r '.appId' "$SERVICE_PRINCIPAL_PATH")"
+client_secret="$(jq -r '.password' "$SERVICE_PRINCIPAL_PATH")"
+
+if [[ "$tenant_id" == "null" || "$client_id" == "null" || "$client_secret" == "null" ]]; then
+  echo "Service principal file is missing tenant, appId, or password." >&2
+  exit 1
+fi
+
+if ((ROWS_PER_TABLE < 0)); then
+  echo "ROWS_PER_TABLE must be greater than or equal to 0." >&2
+  exit 1
+fi
+
+if ((BATCH_SIZE < 1)); then
+  echo "BATCH_SIZE must be greater than 0." >&2
+  exit 1
+fi
+
+echo "Generating $ROWS_PER_TABLE shared RequestID values..."
+generate_request_ids "$ROWS_PER_TABLE"
+
+echo "Requesting Azure Monitor access token..."
+access_token="$(get_access_token "$tenant_id" "$client_id" "$client_secret")"
+
+if [[ -z "$access_token" || "$access_token" == "null" ]]; then
+  echo "Failed to get an Azure Monitor access token." >&2
+  exit 1
+fi
+
+payload_dir="$(mktemp -d)"
+trap 'rm -rf "$payload_dir"' EXIT
+
+workspace_count="$(jq '.workspaces | length' "$CONFIG_PATH")"
+table_count="$(jq '.tables | length' "$CONFIG_PATH")"
+
+for ((workspace_index = 0; workspace_index < workspace_count; workspace_index++)); do
+  workspace_name="$(jq -r ".workspaces[$workspace_index].name" "$CONFIG_PATH")"
+  dce_endpoint="$(jq -r ".workspaces[$workspace_index].dceLogsIngestionEndpoint" "$CONFIG_PATH")"
+  dcr_immutable_id="$(jq -r ".workspaces[$workspace_index].dcrImmutableId" "$CONFIG_PATH")"
+
+  if [[ -z "$dce_endpoint" || "$dce_endpoint" == "null" ]]; then
+    echo "Missing DCE logs ingestion endpoint for workspace $workspace_name." >&2
+    exit 1
+  fi
+
+  for ((table_index = 0; table_index < table_count; table_index++)); do
+    table_name="$(jq -r ".tables[$table_index]" "$CONFIG_PATH")"
+    stream_name="$(stream_name_for_table "$table_name")"
+
+    echo "Sending $ROWS_PER_TABLE rows to $workspace_name/$table_name..."
+
+    for ((first_sequence = 1; first_sequence <= ROWS_PER_TABLE; first_sequence += BATCH_SIZE)); do
+      remaining=$((ROWS_PER_TABLE - first_sequence + 1))
+      if ((remaining < BATCH_SIZE)); then
+        batch_count="$remaining"
+      else
+        batch_count="$BATCH_SIZE"
+      fi
+
+      payload_path="$payload_dir/${workspace_name}-${table_name}-${first_sequence}.json"
+      write_payload "$payload_path" "$workspace_name" "$table_name" "$first_sequence" "$batch_count"
+      post_payload "$access_token" "$dce_endpoint" "$dcr_immutable_id" "$stream_name" "$payload_path"
+    done
+  done
+done
+
+echo "Done."

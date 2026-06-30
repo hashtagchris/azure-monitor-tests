@@ -29,3 +29,11 @@ against Microsoft Entra (scope `https://monitor.azure.com/.default`).
 
 Logs land in the OTel logs schema in Log Analytics (e.g. the `AppTraces` /
 OTel-Logs table; check the workspace after first ingestion).
+
+### Auxiliary and Analytics custom tables
+
+Creates two Log Analytics workspaces, each with three identically shaped custom
+tables on the Auxiliary table plan and two on the Analytics table plan, plus a
+script to populate them with dummy logs.
+
+- Resources and scripts: `azure-resources/auxiliary-tables/`.

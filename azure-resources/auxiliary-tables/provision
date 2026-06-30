@@ -1,0 +1,343 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing required command: $1" >&2
+    exit 1
+  fi
+}
+
+json_array_from_lines() {
+  jq -R . | jq -s .
+}
+
+table_payload() {
+  local table_name="$1"
+  local table_plan="$2"
+
+  jq -n \
+    --arg table_name "$table_name" \
+    --arg table_plan "$table_plan" \
+    --argjson total_retention_in_days "$TOTAL_RETENTION_IN_DAYS" \
+    '{
+      properties: {
+        schema: {
+          name: $table_name,
+          columns: [
+            { name: "TimeGenerated", type: "datetime" },
+            { name: "RequestID", type: "string" },
+            { name: "TableName", type: "string" },
+            { name: "Message", type: "string" },
+            { name: "SeverityText", type: "string" },
+            { name: "Source", type: "string" },
+            { name: "SequenceNumber", type: "int" }
+          ]
+        },
+        totalRetentionInDays: $total_retention_in_days,
+        plan: $table_plan
+      }
+    }'
+}
+
+dce_payload() {
+  jq -n --arg location "$LOCATION" '{
+    location: $location,
+    properties: {
+      networkAcls: {
+        publicNetworkAccess: "Enabled"
+      }
+    }
+  }'
+}
+
+dcr_payload() {
+  local workspace_resource_id="$1"
+  local dce_resource_id="$2"
+  local tables_json="$3"
+
+  jq -n \
+    --arg location "$LOCATION" \
+    --arg workspace_resource_id "$workspace_resource_id" \
+    --arg dce_resource_id "$dce_resource_id" \
+    --argjson tables "$tables_json" \
+    '
+    def columns: [
+      { name: "TimeGenerated", type: "datetime" },
+      { name: "RequestID", type: "string" },
+      { name: "TableName", type: "string" },
+      { name: "Message", type: "string" },
+      { name: "SeverityText", type: "string" },
+      { name: "Source", type: "string" },
+      { name: "SequenceNumber", type: "int" }
+    ];
+
+    {
+      location: $location,
+      properties: {
+        dataCollectionEndpointId: $dce_resource_id,
+        streamDeclarations: (
+          $tables
+          | map({
+              key: ("Custom-" + sub("_CL$"; "")),
+              value: { columns: columns }
+            })
+          | from_entries
+        ),
+        destinations: {
+          logAnalytics: [
+            {
+              workspaceResourceId: $workspace_resource_id,
+              name: "workspace"
+            }
+          ]
+        },
+        dataFlows: (
+          $tables
+          | map({
+              streams: [("Custom-" + sub("_CL$"; ""))],
+              destinations: ["workspace"],
+              transformKql: "source",
+              outputStream: ("Custom-" + .)
+            })
+        )
+      }
+    }'
+}
+
+wait_for_table() {
+  local workspace_name="$1"
+  local table_name="$2"
+  local resource_id="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.OperationalInsights/workspaces/$workspace_name/tables/$table_name"
+  local state
+
+  for _ in {1..30}; do
+    state="$(az rest \
+      --method get \
+      --uri "https://management.azure.com${resource_id}?api-version=$TABLE_API_VERSION" \
+      --query properties.provisioningState -o tsv 2>/dev/null || true)"
+
+    case "$state" in
+      Succeeded)
+        return 0
+        ;;
+      Failed)
+        echo "Table $table_name in $workspace_name failed provisioning." >&2
+        return 1
+        ;;
+    esac
+
+    sleep 10
+  done
+
+  echo "Timed out waiting for table $table_name in $workspace_name to provision." >&2
+  return 1
+}
+
+require_cmd az
+require_cmd jq
+
+echo "Checking login status..."
+az account show >/dev/null || { echo "Not logged in. Please run 'az login'." >&2; exit 1; }
+
+SUBSCRIPTION_ID="${SUBSCRIPTION_ID:-$(az account show --query id -o tsv)}"
+BASE_NAME="${BASE_NAME:-az-monitor-aux-tables}"
+RESOURCE_GROUP="${RESOURCE_GROUP:-${BASE_NAME}-rg}"
+LOCATION="${LOCATION:-centralus}"
+WORKSPACE_NAMES_CSV="${WORKSPACE_NAMES:-${BASE_NAME}-law-1,${BASE_NAME}-law-2}"
+AUXILIARY_TABLE_NAMES_CSV="${AUXILIARY_TABLE_NAMES:-${TABLE_NAMES:-AuxLogsA_CL,AuxLogsB_CL,AuxLogsC_CL}}"
+ANALYTICS_TABLE_NAMES_CSV="${ANALYTICS_TABLE_NAMES:-AnalyticsLogsA_CL,AnalyticsLogsB_CL}"
+TOTAL_RETENTION_IN_DAYS="${TOTAL_RETENTION_IN_DAYS:-365}"
+SP_NAME="${SP_NAME:-${BASE_NAME}-sp}"
+ARTIFACT_DIR="${ARTIFACT_DIR:-$SCRIPT_DIR/$BASE_NAME}"
+TABLE_API_VERSION="${TABLE_API_VERSION:-2025-07-01}"
+MONITOR_API_VERSION="${MONITOR_API_VERSION:-2023-03-11}"
+
+IFS=',' read -r -a WORKSPACE_NAMES <<< "$WORKSPACE_NAMES_CSV"
+IFS=',' read -r -a AUXILIARY_TABLE_NAMES <<< "$AUXILIARY_TABLE_NAMES_CSV"
+IFS=',' read -r -a ANALYTICS_TABLE_NAMES <<< "$ANALYTICS_TABLE_NAMES_CSV"
+TABLE_NAMES=("${AUXILIARY_TABLE_NAMES[@]}" "${ANALYTICS_TABLE_NAMES[@]}")
+
+if [[ "${#WORKSPACE_NAMES[@]}" -ne 2 ]]; then
+  echo "WORKSPACE_NAMES must contain exactly 2 comma-separated workspace names." >&2
+  exit 1
+fi
+
+if [[ "${#AUXILIARY_TABLE_NAMES[@]}" -ne 3 ]]; then
+  echo "AUXILIARY_TABLE_NAMES must contain exactly 3 comma-separated custom table names." >&2
+  exit 1
+fi
+
+if [[ "${#ANALYTICS_TABLE_NAMES[@]}" -ne 2 ]]; then
+  echo "ANALYTICS_TABLE_NAMES must contain exactly 2 comma-separated custom table names." >&2
+  exit 1
+fi
+
+for table_name in "${TABLE_NAMES[@]}"; do
+  if [[ "$table_name" != *_CL ]]; then
+    echo "Custom table name must end in _CL: $table_name" >&2
+    exit 1
+  fi
+done
+
+mkdir -p "$ARTIFACT_DIR/tables"
+
+AUXILIARY_TABLES_JSON="$(printf '%s\n' "${AUXILIARY_TABLE_NAMES[@]}" | json_array_from_lines)"
+ANALYTICS_TABLES_JSON="$(printf '%s\n' "${ANALYTICS_TABLE_NAMES[@]}" | json_array_from_lines)"
+TABLES_JSON="$(printf '%s\n' "${TABLE_NAMES[@]}" | json_array_from_lines)"
+WORKSPACES_JSONL="$ARTIFACT_DIR/workspaces.jsonl"
+: > "$WORKSPACES_JSONL"
+
+az account set --subscription "$SUBSCRIPTION_ID"
+
+echo "Creating resource group $RESOURCE_GROUP..."
+az group create --resource-group "$RESOURCE_GROUP" --location "$LOCATION" >/dev/null
+
+DCR_RESOURCE_IDS=()
+
+for index in "${!WORKSPACE_NAMES[@]}"; do
+  workspace_name="${WORKSPACE_NAMES[$index]}"
+  workspace_number=$((index + 1))
+  dce_name="${workspace_name}-dce"
+  dcr_name="${workspace_name}-dcr"
+
+  echo "Creating Log Analytics workspace $workspace_name..."
+  workspace_resource_id="$(az monitor log-analytics workspace create \
+    --resource-group "$RESOURCE_GROUP" \
+    --workspace-name "$workspace_name" \
+    --location "$LOCATION" \
+    --query id -o tsv)"
+
+  echo "Creating Data Collection Endpoint $dce_name..."
+  dce_resource_id="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Insights/dataCollectionEndpoints/$dce_name"
+  dce_payload > "$ARTIFACT_DIR/${workspace_name}-dce.payload.json"
+  az rest \
+    --method put \
+    --uri "https://management.azure.com${dce_resource_id}?api-version=$MONITOR_API_VERSION" \
+    --body "@$ARTIFACT_DIR/${workspace_name}-dce.payload.json" \
+    | tee "$ARTIFACT_DIR/${workspace_name}-dce.json" >/dev/null
+
+  dce_logs_ingestion_endpoint="$(jq -r '.properties.logsIngestion.endpoint // empty' "$ARTIFACT_DIR/${workspace_name}-dce.json")"
+  if [[ -z "$dce_logs_ingestion_endpoint" ]]; then
+    az rest \
+      --method get \
+      --uri "https://management.azure.com${dce_resource_id}?api-version=$MONITOR_API_VERSION" \
+      | tee "$ARTIFACT_DIR/${workspace_name}-dce.json" >/dev/null
+    dce_logs_ingestion_endpoint="$(jq -r '.properties.logsIngestion.endpoint // empty' "$ARTIFACT_DIR/${workspace_name}-dce.json")"
+  fi
+
+  if [[ -z "$dce_logs_ingestion_endpoint" ]]; then
+    echo "DCE $dce_name did not return a logs ingestion endpoint." >&2
+    exit 1
+  fi
+
+  for table_name in "${AUXILIARY_TABLE_NAMES[@]}"; do
+    echo "Creating Auxiliary table $table_name in $workspace_name..."
+    table_resource_id="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.OperationalInsights/workspaces/$workspace_name/tables/$table_name"
+    table_payload_path="$ARTIFACT_DIR/tables/${workspace_name}-${table_name}.payload.json"
+    table_response_path="$ARTIFACT_DIR/tables/${workspace_name}-${table_name}.json"
+
+    table_payload "$table_name" "Auxiliary" > "$table_payload_path"
+    az rest \
+      --method put \
+      --uri "https://management.azure.com${table_resource_id}?api-version=$TABLE_API_VERSION" \
+      --body "@$table_payload_path" \
+      | tee "$table_response_path" >/dev/null
+    wait_for_table "$workspace_name" "$table_name"
+  done
+
+  for table_name in "${ANALYTICS_TABLE_NAMES[@]}"; do
+    echo "Creating Analytics table $table_name in $workspace_name..."
+    table_resource_id="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.OperationalInsights/workspaces/$workspace_name/tables/$table_name"
+    table_payload_path="$ARTIFACT_DIR/tables/${workspace_name}-${table_name}.payload.json"
+    table_response_path="$ARTIFACT_DIR/tables/${workspace_name}-${table_name}.json"
+
+    table_payload "$table_name" "Analytics" > "$table_payload_path"
+    az rest \
+      --method put \
+      --uri "https://management.azure.com${table_resource_id}?api-version=$TABLE_API_VERSION" \
+      --body "@$table_payload_path" \
+      | tee "$table_response_path" >/dev/null
+    wait_for_table "$workspace_name" "$table_name"
+  done
+
+  echo "Creating DCR $dcr_name..."
+  dcr_resource_id="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Insights/dataCollectionRules/$dcr_name"
+  DCR_RESOURCE_IDS+=("$dcr_resource_id")
+  dcr_payload "$workspace_resource_id" "$dce_resource_id" "$TABLES_JSON" > "$ARTIFACT_DIR/${workspace_name}-dcr.payload.json"
+  az rest \
+    --method put \
+    --uri "https://management.azure.com${dcr_resource_id}?api-version=$MONITOR_API_VERSION" \
+    --body "@$ARTIFACT_DIR/${workspace_name}-dcr.payload.json" \
+    | tee "$ARTIFACT_DIR/${workspace_name}-dcr.json" >/dev/null
+
+  dcr_immutable_id="$(jq -r '.properties.immutableId' "$ARTIFACT_DIR/${workspace_name}-dcr.json")"
+
+  jq -n \
+    --arg name "$workspace_name" \
+    --argjson number "$workspace_number" \
+    --arg resourceId "$workspace_resource_id" \
+    --arg dceName "$dce_name" \
+    --arg dceResourceId "$dce_resource_id" \
+    --arg dceLogsIngestionEndpoint "$dce_logs_ingestion_endpoint" \
+    --arg dcrName "$dcr_name" \
+    --arg dcrResourceId "$dcr_resource_id" \
+    --arg dcrImmutableId "$dcr_immutable_id" \
+    --argjson tables "$TABLES_JSON" \
+    '{
+      name: $name,
+      number: $number,
+      resourceId: $resourceId,
+      dceName: $dceName,
+      dceResourceId: $dceResourceId,
+      dceLogsIngestionEndpoint: $dceLogsIngestionEndpoint,
+      dcrName: $dcrName,
+      dcrResourceId: $dcrResourceId,
+      dcrImmutableId: $dcrImmutableId,
+      streams: (
+        $tables
+        | map({
+            tableName: .,
+            streamName: ("Custom-" + sub("_CL$"; ""))
+          })
+      )
+    }' >> "$WORKSPACES_JSONL"
+done
+
+echo "Creating service principal $SP_NAME scoped to the DCRs..."
+az ad sp create-for-rbac \
+  --name "$SP_NAME" \
+  --role "Monitoring Metrics Publisher" \
+  --scopes "${DCR_RESOURCE_IDS[@]}" \
+  | tee "$ARTIFACT_DIR/service-principal.json" >/dev/null
+
+jq -s \
+  --arg subscriptionId "$SUBSCRIPTION_ID" \
+  --arg resourceGroup "$RESOURCE_GROUP" \
+  --arg location "$LOCATION" \
+  --arg baseName "$BASE_NAME" \
+  --arg artifactDir "$ARTIFACT_DIR" \
+  --argjson auxiliaryTables "$AUXILIARY_TABLES_JSON" \
+  --argjson analyticsTables "$ANALYTICS_TABLES_JSON" \
+  --argjson tables "$TABLES_JSON" \
+  '{
+    subscriptionId: $subscriptionId,
+    resourceGroup: $resourceGroup,
+    location: $location,
+    baseName: $baseName,
+    artifactDir: $artifactDir,
+    auxiliaryTables: $auxiliaryTables,
+    analyticsTables: $analyticsTables,
+    tables: $tables,
+    workspaces: .
+  }' "$WORKSPACES_JSONL" > "$ARTIFACT_DIR/config.json"
+
+rm -f "$WORKSPACES_JSONL"
+
+echo "Done."
+echo "Artifacts: $ARTIFACT_DIR"
+echo "Populate dummy logs with: ARTIFACT_DIR=\"$ARTIFACT_DIR\" ./populate-dummy-logs"
