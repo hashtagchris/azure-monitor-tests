@@ -31,10 +31,12 @@ By default, the script creates:
   `AuxLogsC_CL`
 - Analytics tables in each workspace: `AnalyticsLogsA_CL`, `AnalyticsLogsB_CL`
 - One Data Collection Endpoint and one Data Collection Rule per workspace
+- One saved Log Analytics function per workspace: `LogsByRequestId(requestId:string)`
 - One service principal scoped to the DCRs with `Monitoring Metrics Publisher`
 
 Artifacts are written to `./az-monitor-aux-tables/`, including `config.json`,
-DCE/DCR responses, table payloads, and `service-principal.json`.
+DCE/DCR responses, table payloads, function payloads, and
+`service-principal.json`.
 
 Configuration overrides:
 
@@ -45,8 +47,17 @@ LOCATION="eastus" \
 WORKSPACE_NAMES="my-aux-law-1,my-aux-law-2" \
 AUXILIARY_TABLE_NAMES="MyAuxA_CL,MyAuxB_CL,MyAuxC_CL" \
 ANALYTICS_TABLE_NAMES="MyAnalyticsA_CL,MyAnalyticsB_CL" \
+FUNCTION_ALIAS="LogsByRequestId" \
 TOTAL_RETENTION_IN_DAYS="365" \
 ./provision
+```
+
+The saved function uses the first Analytics table and first Auxiliary table from
+the configured table lists. With the default names, the function query is:
+
+```kusto
+union AnalyticsLogsA_CL, AuxLogsA_CL
+| where RequestID == requestId
 ```
 
 ## Populate dummy logs
@@ -83,7 +94,7 @@ Every Auxiliary and Analytics table uses this schema:
 
 | Column | Type |
 | --- | --- |
-| `TimeGenerated` | `datetime` |
+| `TimeGenerated` | `dateTime` |
 | `RequestID` | `string` |
 | `TableName` | `string` |
 | `Message` | `string` |
@@ -113,4 +124,8 @@ AuxLogsA_CL
 union AuxLogsA_CL, AuxLogsB_CL, AuxLogsC_CL, AnalyticsLogsA_CL, AnalyticsLogsB_CL
 | summarize Tables=make_set(TableName), Rows=count() by RequestID, SequenceNumber
 | order by SequenceNumber asc
+```
+
+```kusto
+LogsByRequestId("7e99d35b-50c4-4690-b061-f9fb6eed2423")
 ```

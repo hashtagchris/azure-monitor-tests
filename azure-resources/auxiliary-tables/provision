@@ -29,7 +29,7 @@ table_payload() {
         schema: {
           name: $table_name,
           columns: [
-            { name: "TimeGenerated", type: "datetime" },
+            { name: "TimeGenerated", type: "dateTime" },
             { name: "RequestID", type: "string" },
             { name: "TableName", type: "string" },
             { name: "Message", type: "string" },
@@ -40,6 +40,30 @@ table_payload() {
         },
         totalRetentionInDays: $total_retention_in_days,
         plan: $table_plan
+      }
+    }'
+}
+
+saved_function_payload() {
+  local analytics_table_name="$1"
+  local auxiliary_table_name="$2"
+  local query
+
+  query="$(printf 'union %s, %s\n| where RequestID == requestId' "$analytics_table_name" "$auxiliary_table_name")"
+
+  jq -n \
+    --arg category "$FUNCTION_CATEGORY" \
+    --arg alias "$FUNCTION_ALIAS" \
+    --arg parameters "requestId:string" \
+    --arg query "$query" \
+    '{
+      properties: {
+        category: $category,
+        displayName: $alias,
+        functionAlias: $alias,
+        functionParameters: $parameters,
+        query: $query,
+        version: 1
       }
     }'
 }
@@ -67,7 +91,7 @@ dcr_payload() {
     --argjson tables "$tables_json" \
     '
     def columns: [
-      { name: "TimeGenerated", type: "datetime" },
+      { name: "TimeGenerated", type: "dateTime" },
       { name: "RequestID", type: "string" },
       { name: "TableName", type: "string" },
       { name: "Message", type: "string" },
@@ -156,6 +180,9 @@ SP_NAME="${SP_NAME:-${BASE_NAME}-sp}"
 ARTIFACT_DIR="${ARTIFACT_DIR:-$SCRIPT_DIR/$BASE_NAME}"
 TABLE_API_VERSION="${TABLE_API_VERSION:-2025-07-01}"
 MONITOR_API_VERSION="${MONITOR_API_VERSION:-2023-03-11}"
+SAVED_SEARCH_API_VERSION="${SAVED_SEARCH_API_VERSION:-2020-08-01}"
+FUNCTION_ALIAS="${FUNCTION_ALIAS:-LogsByRequestId}"
+FUNCTION_CATEGORY="${FUNCTION_CATEGORY:-CustomLogs}"
 
 IFS=',' read -r -a WORKSPACE_NAMES <<< "$WORKSPACE_NAMES_CSV"
 IFS=',' read -r -a AUXILIARY_TABLE_NAMES <<< "$AUXILIARY_TABLE_NAMES_CSV"
@@ -185,6 +212,7 @@ for table_name in "${TABLE_NAMES[@]}"; do
 done
 
 mkdir -p "$ARTIFACT_DIR/tables"
+mkdir -p "$ARTIFACT_DIR/functions"
 
 AUXILIARY_TABLES_JSON="$(printf '%s\n' "${AUXILIARY_TABLE_NAMES[@]}" | json_array_from_lines)"
 ANALYTICS_TABLES_JSON="$(printf '%s\n' "${ANALYTICS_TABLE_NAMES[@]}" | json_array_from_lines)"
@@ -277,6 +305,17 @@ for index in "${!WORKSPACE_NAMES[@]}"; do
 
   dcr_immutable_id="$(jq -r '.properties.immutableId' "$ARTIFACT_DIR/${workspace_name}-dcr.json")"
 
+  echo "Creating saved function $FUNCTION_ALIAS in $workspace_name..."
+  function_resource_id="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.OperationalInsights/workspaces/$workspace_name/savedSearches/$FUNCTION_ALIAS"
+  function_payload_path="$ARTIFACT_DIR/functions/${workspace_name}-${FUNCTION_ALIAS}.payload.json"
+  function_response_path="$ARTIFACT_DIR/functions/${workspace_name}-${FUNCTION_ALIAS}.json"
+  saved_function_payload "${ANALYTICS_TABLE_NAMES[0]}" "${AUXILIARY_TABLE_NAMES[0]}" > "$function_payload_path"
+  az rest \
+    --method put \
+    --uri "https://management.azure.com${function_resource_id}?api-version=$SAVED_SEARCH_API_VERSION" \
+    --body "@$function_payload_path" \
+    | tee "$function_response_path" >/dev/null
+
   jq -n \
     --arg name "$workspace_name" \
     --argjson number "$workspace_number" \
@@ -287,6 +326,8 @@ for index in "${!WORKSPACE_NAMES[@]}"; do
     --arg dcrName "$dcr_name" \
     --arg dcrResourceId "$dcr_resource_id" \
     --arg dcrImmutableId "$dcr_immutable_id" \
+    --arg functionAlias "$FUNCTION_ALIAS" \
+    --arg functionResourceId "$function_resource_id" \
     --argjson tables "$TABLES_JSON" \
     '{
       name: $name,
@@ -298,6 +339,8 @@ for index in "${!WORKSPACE_NAMES[@]}"; do
       dcrName: $dcrName,
       dcrResourceId: $dcrResourceId,
       dcrImmutableId: $dcrImmutableId,
+      functionAlias: $functionAlias,
+      functionResourceId: $functionResourceId,
       streams: (
         $tables
         | map({
