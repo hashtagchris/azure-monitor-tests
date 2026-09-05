@@ -1,18 +1,85 @@
 {
   "resourceLogs": [
     {
-      "resource": {},
+      "resource": {
+        "attributes": [
+          {
+            "key": "test.run.id",
+            "value": { "stringValue": "__TEST_RUN_ID__" }
+          },
+          {
+            "key": "test.resource.dataset",
+            "value": { "stringValue": "multi-record-resource-attributes" }
+          },
+          {
+            "key": "test.resource.region",
+            "value": { "stringValue": "centralus" }
+          },
+          {
+            "key": "test.resource.version",
+            "value": { "stringValue": "1" }
+          }
+        ]
+      },
       "scopeLogs": [
         {
-          "scope": {},
+          "scope": {
+            "name": "azure-monitor-resource-attributes-test"
+          },
           "logRecords": [
             {
               "timeUnixNano": "__TIME_UNIX_NANO__",
               "severityText": "Info",
-              "body": { "stringValue": "hello from opentelemetry input via OTLP" },
+              "body": {
+                "stringValue": "resource attribute duplication test __TEST_RUN_ID__ record-1"
+              },
               "attributes": [
-                { "key": "key1", "value": { "stringValue": "value1" } },
-                { "key": "key2", "value": { "stringValue": "value2" } }
+                {
+                  "key": "test.run.id",
+                  "value": { "stringValue": "__TEST_RUN_ID__" }
+                },
+                {
+                  "key": "test.record.id",
+                  "value": { "stringValue": "record-1" }
+                }
+              ],
+              "traceId": "5b8efff798038103d269b633813fc60c",
+              "spanId": "eee19b7ec3c1b173"
+            },
+            {
+              "timeUnixNano": "__TIME_UNIX_NANO__",
+              "severityText": "Warn",
+              "body": {
+                "stringValue": "resource attribute duplication test __TEST_RUN_ID__ record-2"
+              },
+              "attributes": [
+                {
+                  "key": "test.run.id",
+                  "value": { "stringValue": "__TEST_RUN_ID__" }
+                },
+                {
+                  "key": "test.record.id",
+                  "value": { "stringValue": "record-2" }
+                }
+              ],
+              "traceId": "5b8efff798038103d269b633813fc60c",
+              "spanId": "eee19b7ec3c1b173"
+            },
+            {
+              "timeUnixNano": "__TIME_UNIX_NANO__",
+              "severityText": "Error",
+              "body": {
+                "stringValue": "resource attribute duplication test __TEST_RUN_ID__ record-3"
+              },
+              "attributes": [
+                {
+                  "key": "test.run.id",
+                  "value": { "stringValue": "__TEST_RUN_ID__" }
+                },
+                {
+                  "key": "test.record.id",
+                  "value": { "stringValue": "record-3" }
+                }
               ],
               "traceId": "5b8efff798038103d269b633813fc60c",
               "spanId": "eee19b7ec3c1b173"

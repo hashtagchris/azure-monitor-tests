@@ -15,9 +15,19 @@ export TENANT_ID=$(jq -r '.tenant' "$CONFIG_DIR/service-principal.json")
 export CLIENT_ID=$(jq -r '.appId' "$CONFIG_DIR/service-principal.json")
 export CLIENT_SECRET=$(jq -r '.password' "$CONFIG_DIR/service-principal.json")
 
-# Render payload with current timestamp (nanoseconds).
-TIME_UNIX_NANO=$(python3 -c 'import time; print(int(time.time() * 1_000_000_000))')
-sed "s/__TIME_UNIX_NANO__/${TIME_UNIX_NANO}/" payload.json.tmpl > payload.json
+# Render an identifiable payload and keep it on disk as the audit record for
+# the most recent run.
+TEST_RUN_ID="resource-attributes-$(python3 -c 'import uuid; print(uuid.uuid4())')"
+TIME_UNIX_NANO=$(python3 -c 'import time; print(time.time_ns())')
+sed \
+    -e "s/__TEST_RUN_ID__/${TEST_RUN_ID}/g" \
+    -e "s/__TIME_UNIX_NANO__/${TIME_UNIX_NANO}/g" \
+    payload.json.tmpl > payload.json
+
+jq -e . payload.json >/dev/null
+echo "OTLP test run ID: $TEST_RUN_ID"
+echo "Rendered OTLP payload: $SCRIPT_DIR/payload.json"
+jq . payload.json
 
 # Start Fluent Bit in the background; the opentelemetry input doesn't have
 # an exit-on-eof, so we manage its lifetime manually.
@@ -37,7 +47,7 @@ done
 
 # Send the OTLP log payload.
 curl -sS -X POST -H 'Content-Type: application/json' \
-     --data @payload.json \
+     --data-binary @payload.json \
      -w '\nOTLP input HTTP status: %{http_code}\n' \
      http://127.0.0.1:4318/v1/logs
 
