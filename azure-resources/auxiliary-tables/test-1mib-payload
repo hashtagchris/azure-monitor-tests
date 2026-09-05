@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+# Error if you go above 1 MiB payload:
+# HTTP 413
+# {"error":{"code":"ContentLengthLimitExceeded","message":"Maximum allowed content length: 1048576 bytes (1 MB). Provided content length: 1048577 bytes."}}
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,7 +39,7 @@ ARTIFACT_DIR="${ARTIFACT_DIR:-$SCRIPT_DIR/az-monitor-aux-tables}"
 CONFIG_PATH="${CONFIG_PATH:-$ARTIFACT_DIR/config.json}"
 SERVICE_PRINCIPAL_PATH="${SERVICE_PRINCIPAL_PATH:-$ARTIFACT_DIR/service-principal.json}"
 INGEST_API_VERSION="${INGEST_API_VERSION:-2023-01-01}"
-PAYLOAD_SIZE_BYTES=$((1024 * 1024))
+PAYLOAD_SIZE_BYTES=1048576 # 1 MiB
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
   echo "Missing config file: $CONFIG_PATH" >&2
