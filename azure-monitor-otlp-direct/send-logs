@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing required command: $1" >&2
+    exit 1
+  fi
+}
+
+get_access_token() {
+  local tenant_id="$1"
+  local client_id="$2"
+  local client_secret="$3"
+  local response_path="$4"
+  local http_status
+  local access_token
+
+  if ! http_status="$(printf '%s' "$client_secret" | curl -sS \
+      --request POST "https://login.microsoftonline.com/${tenant_id}/oauth2/v2.0/token" \
+      --header "Content-Type: application/x-www-form-urlencoded" \
+      --data-urlencode "client_id=${client_id}" \
+      --data-urlencode "client_secret@-" \
+      --data-urlencode "scope=https://monitor.azure.com/.default" \
+      --data-urlencode "grant_type=client_credentials" \
+      --output "$response_path" \
+      --write-out "%{http_code}")"; then
+    echo "Microsoft Entra token request failed before receiving an HTTP response." >&2
+    return 1
+  fi
+
+  if [[ ! "$http_status" =~ ^2[0-9][0-9]$ ]]; then
+    echo "Microsoft Entra token endpoint returned HTTP $http_status" >&2
+    if [[ -s "$response_path" ]]; then
+      cat "$response_path" >&2
+    fi
+    return 1
+  fi
+
+  if ! access_token="$(jq -er '.access_token' "$response_path")"; then
+    echo "Microsoft Entra token response did not contain an access token." >&2
+    return 1
+  fi
+
+  printf '%s' "$access_token"
+}
+
+require_cmd curl
+require_cmd go
+require_cmd jq
+require_cmd python3
+
+ARTIFACT_DIR="$SCRIPT_DIR/artifacts"
+DCE_PATH="$ARTIFACT_DIR/dce.json"
+DCR_PATH="$ARTIFACT_DIR/dcr.json"
+SERVICE_PRINCIPAL_PATH="$ARTIFACT_DIR/service-principal.json"
+PAYLOAD_PATH="$ARTIFACT_DIR/payload.json"
+PROTOBUF_PAYLOAD_PATH="$ARTIFACT_DIR/payload.pb"
+RESPONSE_BODY_PATH="$ARTIFACT_DIR/response-body.txt"
+TOKEN_RESPONSE_PATH="$ARTIFACT_DIR/token-response.json"
+AUTHORIZATION_HEADER_PATH="$ARTIFACT_DIR/authorization-header.txt"
+MAX_SEND_ATTEMPTS="${MAX_SEND_ATTEMPTS:-30}"
+RETRY_DELAY_SECONDS="${RETRY_DELAY_SECONDS:-10}"
+
+for required_file in "$DCE_PATH" "$DCR_PATH" "$SERVICE_PRINCIPAL_PATH"; do
+  if [[ ! -f "$required_file" ]]; then
+    echo "Missing $required_file. Run ./provision first." >&2
+    exit 1
+  fi
+done
+
+if [[ ! "$MAX_SEND_ATTEMPTS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "MAX_SEND_ATTEMPTS must be a positive integer." >&2
+  exit 1
+fi
+
+if [[ ! "$RETRY_DELAY_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "RETRY_DELAY_SECONDS must be a positive integer." >&2
+  exit 1
+fi
+
+touch "$TOKEN_RESPONSE_PATH"
+chmod 600 "$TOKEN_RESPONSE_PATH"
+touch "$AUTHORIZATION_HEADER_PATH"
+chmod 600 "$AUTHORIZATION_HEADER_PATH"
+trap 'rm -f "$TOKEN_RESPONSE_PATH" "$AUTHORIZATION_HEADER_PATH"' EXIT
+
+LOGS_DCE_URL="$(jq -er '.logsIngestion.endpoint' "$DCE_PATH")"
+DCR_IMMUTABLE_ID="$(jq -er '.immutableId' "$DCR_PATH")"
+TENANT_ID="$(jq -er '.tenant' "$SERVICE_PRINCIPAL_PATH")"
+CLIENT_ID="$(jq -er '.appId' "$SERVICE_PRINCIPAL_PATH")"
+CLIENT_SECRET="$(jq -er '.password' "$SERVICE_PRINCIPAL_PATH")"
+
+OTLP_URL="${LOGS_DCE_URL%/}/dataCollectionRules/${DCR_IMMUTABLE_ID}/streams/Microsoft-OTLP-Logs/otlp/v1/logs"
+TEST_RUN_ID="direct-resource-attributes-$(python3 -c 'import uuid; print(uuid.uuid4())')"
+TIME_UNIX_NANO="$(python3 -c 'import time; print(time.time_ns())')"
+
+sed \
+  -e "s/__TEST_RUN_ID__/${TEST_RUN_ID}/g" \
+  -e "s/__TIME_UNIX_NANO__/${TIME_UNIX_NANO}/g" \
+  payload.json.tmpl > "$PAYLOAD_PATH"
+jq -e . "$PAYLOAD_PATH" >/dev/null
+
+echo "OTLP test run ID: $TEST_RUN_ID"
+echo "Azure Monitor OTLP endpoint: $OTLP_URL"
+echo "Rendered OTLP payload: $PAYLOAD_PATH"
+jq . "$PAYLOAD_PATH"
+
+go run . \
+  --input "$PAYLOAD_PATH" \
+  --output "$PROTOBUF_PAYLOAD_PATH"
+
+echo "Acquiring Microsoft Entra access token"
+ACCESS_TOKEN="$(get_access_token \
+  "$TENANT_ID" \
+  "$CLIENT_ID" \
+  "$CLIENT_SECRET" \
+  "$TOKEN_RESPONSE_PATH")"
+printf 'Authorization: Bearer %s\n' "$ACCESS_TOKEN" > "$AUTHORIZATION_HEADER_PATH"
+
+echo "Posting OTLP payload directly to Azure Monitor"
+for attempt in $(seq 1 "$MAX_SEND_ATTEMPTS"); do
+  HTTP_STATUS="$(curl -sS \
+    --request POST "$OTLP_URL" \
+    --header "@$AUTHORIZATION_HEADER_PATH" \
+    --header "Content-Type: application/x-protobuf" \
+    --data-binary "@$PROTOBUF_PAYLOAD_PATH" \
+    --output "$RESPONSE_BODY_PATH" \
+    --write-out "%{http_code}")"
+
+  if [[ "$HTTP_STATUS" =~ ^2[0-9][0-9]$ ]]; then
+    break
+  fi
+
+  if [[ "$HTTP_STATUS" =~ ^(401|403|429|503)$ && "$attempt" -lt "$MAX_SEND_ATTEMPTS" ]]; then
+    echo "Azure Monitor returned HTTP $HTTP_STATUS on attempt $attempt of $MAX_SEND_ATTEMPTS; retrying" >&2
+    sleep "$RETRY_DELAY_SECONDS"
+    continue
+  fi
+
+  echo "Azure Monitor returned HTTP $HTTP_STATUS" >&2
+  if [[ -s "$RESPONSE_BODY_PATH" ]]; then
+    cat "$RESPONSE_BODY_PATH" >&2
+  fi
+  exit 1
+done
+
+echo "Azure Monitor returned HTTP $HTTP_STATUS"
+if [[ -s "$RESPONSE_BODY_PATH" ]]; then
+  echo "Response body: $RESPONSE_BODY_PATH"
+  cat "$RESPONSE_BODY_PATH"
+fi

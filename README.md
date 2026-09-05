@@ -4,6 +4,15 @@ Create a workspace and DCR, and send logs to it.
 
 ## Variants
 
+### Direct OTLP/HTTP (no Fluent Bit)
+
+Renders an auditable OTLP/JSON payload, encodes it as OTLP protobuf, and sends
+it directly to Azure Monitor's native OTLP logs endpoint using `curl` and a
+Microsoft Entra client-credentials token. The standalone test provisions its
+own workspace, DCE, DCR, and service principal.
+
+- Test and resources: `azure-monitor-otlp-direct/`.
+
 ### `azure_logs_ingestion` output (custom-stream Logs Ingestion API)
 
 Uses Fluent Bit's [`azure_logs_ingestion`](https://docs.fluentbit.io/manual/pipeline/outputs/azure_logs_ingestion)

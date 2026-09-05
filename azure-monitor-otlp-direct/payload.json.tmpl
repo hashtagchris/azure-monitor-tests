@@ -1,0 +1,112 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "test.run.id",
+            "value": {
+              "stringValue": "__TEST_RUN_ID__"
+            }
+          },
+          {
+            "key": "test.resource.dataset",
+            "value": {
+              "stringValue": "multi-record-resource-attributes"
+            }
+          },
+          {
+            "key": "test.resource.transport",
+            "value": {
+              "stringValue": "direct-otlp-http"
+            }
+          },
+          {
+            "key": "test.resource.region",
+            "value": {
+              "stringValue": "centralus"
+            }
+          },
+          {
+            "key": "test.resource.version",
+            "value": {
+              "stringValue": "1"
+            }
+          }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {
+            "name": "azure-monitor-otlp-direct"
+          },
+          "logRecords": [
+            {
+              "timeUnixNano": "__TIME_UNIX_NANO__",
+              "severityText": "Info",
+              "body": {
+                "stringValue": "direct OTLP resource attribute test __TEST_RUN_ID__ record-1"
+              },
+              "attributes": [
+                {
+                  "key": "test.run.id",
+                  "value": {
+                    "stringValue": "__TEST_RUN_ID__"
+                  }
+                },
+                {
+                  "key": "test.record.id",
+                  "value": {
+                    "stringValue": "record-1"
+                  }
+                }
+              ]
+            },
+            {
+              "timeUnixNano": "__TIME_UNIX_NANO__",
+              "severityText": "Warn",
+              "body": {
+                "stringValue": "direct OTLP resource attribute test __TEST_RUN_ID__ record-2"
+              },
+              "attributes": [
+                {
+                  "key": "test.run.id",
+                  "value": {
+                    "stringValue": "__TEST_RUN_ID__"
+                  }
+                },
+                {
+                  "key": "test.record.id",
+                  "value": {
+                    "stringValue": "record-2"
+                  }
+                }
+              ]
+            },
+            {
+              "timeUnixNano": "__TIME_UNIX_NANO__",
+              "severityText": "Error",
+              "body": {
+                "stringValue": "direct OTLP resource attribute test __TEST_RUN_ID__ record-3"
+              },
+              "attributes": [
+                {
+                  "key": "test.run.id",
+                  "value": {
+                    "stringValue": "__TEST_RUN_ID__"
+                  }
+                },
+                {
+                  "key": "test.record.id",
+                  "value": {
+                    "stringValue": "record-3"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

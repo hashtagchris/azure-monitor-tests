@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing required command: $1" >&2
+    exit 1
+  fi
+}
+
+require_cmd az
+require_cmd jq
+
+wait_for_feature_registration() {
+  local state
+
+  az feature register \
+    --name OtlpApplicationInsights \
+    --namespace Microsoft.Insights \
+    --only-show-errors >/dev/null
+
+  for _ in $(seq 1 120); do
+    state="$(az feature show \
+      --name OtlpApplicationInsights \
+      --namespace Microsoft.Insights \
+      --query properties.state \
+      --output tsv)"
+
+    if [[ "$state" == "Registered" ]]; then
+      return
+    fi
+
+    sleep 5
+  done
+
+  echo "OtlpApplicationInsights feature registration did not complete." >&2
+  exit 1
+}
+
+az account show >/dev/null || {
+  echo "Not logged in. Run 'az login' first." >&2
+  exit 1
+}
+
+SUBSCRIPTION_ID="${SUBSCRIPTION_ID:-$(az account show --query id -o tsv)}"
+BASE_NAME="${BASE_NAME:-az-monitor-otlp-direct}"
+RESOURCE_GROUP="${RESOURCE_GROUP:-${BASE_NAME}-rg}"
+WORKSPACE_NAME="${WORKSPACE_NAME:-${BASE_NAME}-workspace}"
+DCE_NAME="${DCE_NAME:-${BASE_NAME}-dce}"
+DCR_NAME="${DCR_NAME:-${BASE_NAME}-dcr}"
+SP_NAME="${SP_NAME:-${BASE_NAME}-sp}"
+LOCATION="${LOCATION:-centralus}"
+ARTIFACT_DIR="$SCRIPT_DIR/artifacts"
+
+mkdir -p "$ARTIFACT_DIR"
+
+echo "Using subscription $SUBSCRIPTION_ID"
+az account set --subscription "$SUBSCRIPTION_ID"
+
+echo "Registering Azure Monitor OTLP preview support"
+wait_for_feature_registration
+az provider register \
+  --namespace Microsoft.Insights \
+  --only-show-errors \
+  --wait >/dev/null
+az provider register \
+  --namespace Microsoft.OperationalInsights \
+  --only-show-errors \
+  --wait >/dev/null
+az extension add \
+  --name monitor-control-service \
+  --only-show-errors \
+  --upgrade >/dev/null
+
+echo "Creating resource group $RESOURCE_GROUP in $LOCATION"
+az group create \
+  --resource-group "$RESOURCE_GROUP" \
+  --location "$LOCATION" \
+  --only-show-errors >/dev/null
+
+echo "Deploying dedicated workspace, DCE, and DCR"
+DEPLOYMENT_NAME="${BASE_NAME}-$(date +%s)"
+az deployment group create \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "$DEPLOYMENT_NAME" \
+  --template-file arm-template.json \
+  --parameters \
+    workspaceName="$WORKSPACE_NAME" \
+    dataCollectionEndpointName="$DCE_NAME" \
+    dataCollectionRuleName="$DCR_NAME" \
+    location="$LOCATION" \
+  --only-show-errors > "$ARTIFACT_DIR/deployment.json"
+
+echo "Saving deployed resource details"
+az monitor log-analytics workspace show \
+  --resource-group "$RESOURCE_GROUP" \
+  --workspace-name "$WORKSPACE_NAME" \
+  --only-show-errors > "$ARTIFACT_DIR/workspace.json"
+az monitor data-collection endpoint show \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "$DCE_NAME" \
+  --only-show-errors > "$ARTIFACT_DIR/dce.json"
+az monitor data-collection rule show \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "$DCR_NAME" \
+  --only-show-errors > "$ARTIFACT_DIR/dcr.json"
+
+DCR_RESOURCE_ID="$(jq -er '.id' "$ARTIFACT_DIR/dcr.json")"
+SERVICE_PRINCIPAL_PATH="$ARTIFACT_DIR/service-principal.json"
+
+if [[ -f "$SERVICE_PRINCIPAL_PATH" ]]; then
+  if ! SP_APP_ID="$(jq -er '.appId' "$SERVICE_PRINCIPAL_PATH")"; then
+    echo "$SERVICE_PRINCIPAL_PATH is incomplete or invalid." >&2
+    echo "Remove it and delete any orphaned Entra application named $SP_NAME before retrying." >&2
+    exit 1
+  fi
+
+  echo "Reusing service principal $SP_APP_ID from existing artifacts"
+  az ad sp show --id "$SP_APP_ID" --only-show-errors >/dev/null
+
+  ROLE_ASSIGNMENT_COUNT="$(az role assignment list \
+    --assignee "$SP_APP_ID" \
+    --scope "$DCR_RESOURCE_ID" \
+    --role "Monitoring Metrics Publisher" \
+    --query 'length(@)' \
+    --output tsv \
+    --only-show-errors)"
+
+  if [[ "$ROLE_ASSIGNMENT_COUNT" == "0" ]]; then
+    az role assignment create \
+      --assignee "$SP_APP_ID" \
+      --role "Monitoring Metrics Publisher" \
+      --scope "$DCR_RESOURCE_ID" \
+      --only-show-errors >/dev/null
+  fi
+else
+  EXISTING_APP_ID="$(az ad app list \
+    --display-name "$SP_NAME" \
+    --query '[0].appId' \
+    --output tsv \
+    --only-show-errors)"
+
+  if [[ -n "$EXISTING_APP_ID" ]]; then
+    echo "An Entra application named $SP_NAME already exists, but its credentials are not in $SERVICE_PRINCIPAL_PATH." >&2
+    echo "Use a different BASE_NAME or delete the existing application before retrying." >&2
+    exit 1
+  fi
+
+  echo "Creating service principal $SP_NAME"
+  SERVICE_PRINCIPAL_TEMP_PATH="${SERVICE_PRINCIPAL_PATH}.tmp"
+  rm -f "$SERVICE_PRINCIPAL_TEMP_PATH"
+
+  if ! (
+    umask 077
+    az ad sp create-for-rbac \
+      --name "$SP_NAME" \
+      --role "Monitoring Metrics Publisher" \
+      --scopes "$DCR_RESOURCE_ID" \
+      --only-show-errors > "$SERVICE_PRINCIPAL_TEMP_PATH"
+  ); then
+    rm -f "$SERVICE_PRINCIPAL_TEMP_PATH"
+    echo "Failed to create the service principal. Check for an orphaned Entra application named $SP_NAME before retrying." >&2
+    exit 1
+  fi
+
+  if ! jq -e '.appId and .tenant and .password' "$SERVICE_PRINCIPAL_TEMP_PATH" >/dev/null; then
+    rm -f "$SERVICE_PRINCIPAL_TEMP_PATH"
+    echo "Azure CLI returned an incomplete service principal credential response." >&2
+    exit 1
+  fi
+
+  mv "$SERVICE_PRINCIPAL_TEMP_PATH" "$SERVICE_PRINCIPAL_PATH"
+fi
+
+chmod 600 "$SERVICE_PRINCIPAL_PATH"
+
+WORKSPACE_RESOURCE_ID="$(jq -er '.id' "$ARTIFACT_DIR/workspace.json")"
+WORKSPACE_CUSTOMER_ID="$(jq -er '.customerId' "$ARTIFACT_DIR/workspace.json")"
+ENCODED_WORKSPACE_RESOURCE_ID="$(jq -rn \
+  --arg resourceId "$WORKSPACE_RESOURCE_ID" \
+  '$resourceId | @uri')"
+LOGS_QUERY_URL="https://portal.azure.com/#view/Microsoft_Azure_Monitoring_Logs/LogsBlade/resourceId/${ENCODED_WORKSPACE_RESOURCE_ID}"
+
+jq -n \
+  --arg subscriptionId "$SUBSCRIPTION_ID" \
+  --arg resourceGroup "$RESOURCE_GROUP" \
+  --arg workspaceName "$WORKSPACE_NAME" \
+  --arg workspaceResourceId "$WORKSPACE_RESOURCE_ID" \
+  --arg workspaceCustomerId "$WORKSPACE_CUSTOMER_ID" \
+  --arg dataCollectionEndpointName "$DCE_NAME" \
+  --arg dataCollectionRuleName "$DCR_NAME" \
+  --arg servicePrincipalName "$SP_NAME" \
+  --arg logsQueryUrl "$LOGS_QUERY_URL" \
+  '{
+    subscriptionId: $subscriptionId,
+    resourceGroup: $resourceGroup,
+    workspaceName: $workspaceName,
+    workspaceResourceId: $workspaceResourceId,
+    workspaceCustomerId: $workspaceCustomerId,
+    dataCollectionEndpointName: $dataCollectionEndpointName,
+    dataCollectionRuleName: $dataCollectionRuleName,
+    servicePrincipalName: $servicePrincipalName,
+    logsQueryUrl: $logsQueryUrl
+  }' > "$ARTIFACT_DIR/test-environment.json"
+
+echo "Provisioning complete."
+echo "Artifacts: $ARTIFACT_DIR"
+echo "Logs query URL: $LOGS_QUERY_URL"
