@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing required command: $1" >&2
+    exit 1
+  fi
+}
+
+get_access_token() {
+  local tenant_id="$1"
+  local client_id="$2"
+  local client_secret="$3"
+
+  curl --fail-with-body -sS \
+    --request POST "https://login.microsoftonline.com/${tenant_id}/oauth2/v2.0/token" \
+    --header "Content-Type: application/x-www-form-urlencoded" \
+    --data-urlencode "client_id=${client_id}" \
+    --data-urlencode "client_secret=${client_secret}" \
+    --data-urlencode "scope=https://monitor.azure.com/.default" \
+    --data-urlencode "grant_type=client_credentials" \
+    | jq -r '.access_token'
+}
+
+require_cmd curl
+require_cmd jq
+require_cmd python3
+
+ARTIFACT_DIR="${ARTIFACT_DIR:-$SCRIPT_DIR/az-monitor-aux-tables}"
+CONFIG_PATH="${CONFIG_PATH:-$ARTIFACT_DIR/config.json}"
+SERVICE_PRINCIPAL_PATH="${SERVICE_PRINCIPAL_PATH:-$ARTIFACT_DIR/service-principal.json}"
+INGEST_API_VERSION="${INGEST_API_VERSION:-2023-01-01}"
+PAYLOAD_SIZE_BYTES=$((1024 * 1024))
+
+if [[ ! -f "$CONFIG_PATH" ]]; then
+  echo "Missing config file: $CONFIG_PATH" >&2
+  echo "Run ./provision first or set CONFIG_PATH." >&2
+  exit 1
+fi
+
+if [[ ! -f "$SERVICE_PRINCIPAL_PATH" ]]; then
+  echo "Missing service principal file: $SERVICE_PRINCIPAL_PATH" >&2
+  echo "Run ./provision first or set SERVICE_PRINCIPAL_PATH." >&2
+  exit 1
+fi
+
+tenant_id="$(jq -r '.tenant // empty' "$SERVICE_PRINCIPAL_PATH")"
+client_id="$(jq -r '.appId // empty' "$SERVICE_PRINCIPAL_PATH")"
+client_secret="$(jq -r '.password // empty' "$SERVICE_PRINCIPAL_PATH")"
+endpoint="$(jq -r '.workspaces[0].dceLogsIngestionEndpoint // empty' "$CONFIG_PATH")"
+dcr_immutable_id="$(jq -r '.workspaces[0].dcrImmutableId // empty' "$CONFIG_PATH")"
+table_name="$(jq -r '.tables[0] // empty' "$CONFIG_PATH")"
+
+if [[ -z "$tenant_id" || -z "$client_id" || -z "$client_secret" ]]; then
+  echo "Service principal file is missing tenant, appId, or password." >&2
+  exit 1
+fi
+
+if [[ -z "$endpoint" || -z "$dcr_immutable_id" || -z "$table_name" ]]; then
+  echo "Config file is missing a workspace endpoint, DCR immutable ID, or table." >&2
+  exit 1
+fi
+
+stream_name="Custom-${table_name%_CL}"
+payload_path="$(mktemp)"
+response_path="$(mktemp)"
+trap 'rm -f "$payload_path" "$response_path"' EXIT
+
+python3 - "$payload_path" "$table_name" "$PAYLOAD_SIZE_BYTES" <<'PY'
+import json
+import sys
+
+output_path, table_name, target_size_arg = sys.argv[1:]
+target_size = int(target_size_arg)
+max_message_size = 60_000
+
+
+def record(sequence_number, message):
+    return {
+        "TimeGenerated": "2026-01-01T00:00:00Z",
+        "RequestID": f"payload-limit-{sequence_number}",
+        "TableName": table_name,
+        "Message": message,
+        "SeverityText": "Info",
+        "Source": "test-1mib-payload",
+        "SequenceNumber": sequence_number,
+    }
+
+
+for record_count in range(1, 100):
+    records = [record(index, "") for index in range(1, record_count + 1)]
+    empty_payload = json.dumps(records, separators=(",", ":")).encode()
+    message_bytes = target_size - len(empty_payload)
+
+    if 0 <= message_bytes <= record_count * max_message_size:
+        for item in records:
+            chunk_size = min(message_bytes, max_message_size)
+            item["Message"] = "x" * chunk_size
+            message_bytes -= chunk_size
+
+        payload = json.dumps(records, separators=(",", ":")).encode()
+        if len(payload) != target_size:
+            raise RuntimeError(
+                f"Generated {len(payload)} bytes instead of {target_size}"
+            )
+
+        with open(output_path, "wb") as output:
+            output.write(payload)
+        break
+else:
+    raise RuntimeError(f"Could not generate a {target_size}-byte payload")
+PY
+
+actual_size="$(wc -c < "$payload_path" | tr -d '[:space:]')"
+if [[ "$actual_size" -ne "$PAYLOAD_SIZE_BYTES" ]]; then
+  echo "Expected a $PAYLOAD_SIZE_BYTES-byte payload, generated $actual_size bytes." >&2
+  exit 1
+fi
+
+echo "Requesting Azure Monitor access token..."
+access_token="$(get_access_token "$tenant_id" "$client_id" "$client_secret")"
+if [[ -z "$access_token" || "$access_token" == "null" ]]; then
+  echo "Failed to get an Azure Monitor access token." >&2
+  exit 1
+fi
+
+uri="${endpoint%/}/dataCollectionRules/${dcr_immutable_id}/streams/${stream_name}?api-version=${INGEST_API_VERSION}"
+
+echo "Posting an exact $PAYLOAD_SIZE_BYTES-byte payload to $table_name..."
+http_status="$(curl -sS \
+  --output "$response_path" \
+  --write-out '%{http_code}' \
+  --request POST "$uri" \
+  --header "Authorization: Bearer ${access_token}" \
+  --header "Content-Type: application/json" \
+  --data-binary "@${payload_path}")"
+
+if [[ "$http_status" != "204" ]]; then
+  echo "Expected HTTP 204, received HTTP $http_status." >&2
+  cat "$response_path" >&2
+  exit 1
+fi
+
+echo "PASS: Azure Monitor accepted an exact 1 MiB ($PAYLOAD_SIZE_BYTES byte) payload."

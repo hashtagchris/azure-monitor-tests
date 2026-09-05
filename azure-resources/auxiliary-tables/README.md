@@ -9,7 +9,7 @@ Ingestion API.
 ## Prerequisites
 
 - Azure CLI authenticated with `az login`
-- `jq`, `curl`, and `uuidgen`
+- `jq`, `curl`, `python3`, and `uuidgen`
 - Permissions to create resource groups, Log Analytics workspaces, custom tables,
   Data Collection Endpoints, Data Collection Rules, service principals, and role
   assignments
@@ -75,6 +75,25 @@ ROWS_PER_TABLE="25" \
 BATCH_SIZE="10" \
 ARTIFACT_DIR="./az-monitor-aux-tables" \
 ./populate-dummy-logs
+```
+
+## Test the 1 MiB request limit
+
+After provisioning, run the live integration test:
+
+```bash
+./test-1mib-payload
+```
+
+The test generates an uncompressed JSON request body that is exactly 1 MiB
+(1,048,576 bytes), posts it to the first configured table, and requires an HTTP
+204 response. Each record's `Message` remains below the API's 64 KiB field-value
+limit, so the test isolates the total request-size boundary.
+
+To use artifacts in another directory:
+
+```bash
+ARTIFACT_DIR="/path/to/az-monitor-aux-tables" ./test-1mib-payload
 ```
 
 ## Table schema
