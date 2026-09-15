@@ -22,6 +22,8 @@ plugin against a custom-stream DCR (`Custom-MyFluentBitLogs` →
 - Resources: `azure-resources/az-monitor-otel-logs-2/` (and earlier `az-monitor-*`
   experiments).
 - Configs: `fluent-bit/azure_logs_ingestion-output/{dummy-input,tail-input}/`.
+- Fluent Bit uncompressed full-chunk repro:
+  `fluent-bit/azure_logs_ingestion-output/2mb-uncompressed/`.
 
 ### `opentelemetry` output (native OTLP ingestion, preview)
 
