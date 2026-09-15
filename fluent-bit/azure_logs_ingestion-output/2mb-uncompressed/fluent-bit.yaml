@@ -1,0 +1,33 @@
+service:
+  flush: 10
+  grace: 2
+  log_level: debug
+  http_server: true
+  http_listen: 127.0.0.1
+  http_port: ${HTTP_PORT}
+
+pipeline:
+  inputs:
+    - name: dummy
+      tag: two_mb_uncompressed
+      dummy: '{"SeverityText":"Info","Body":"Fluent Bit full chunk sent uncompressed to Azure Monitor","Attributes":{"repro":"azure-logs-ingestion-2mb-uncompressed"}}'
+      samples: 300
+      copies: 100
+      rate: 100
+      fixed_timestamp: true
+      flush_on_startup: true
+
+  outputs:
+    - name: azure_logs_ingestion
+      match: two_mb_uncompressed
+      table_name: MyFluentBitLogs
+      dce_url: ${DCE_URL}
+      dcr_id: ${DCR_ID}
+      auth_url: ${AUTH_URL}
+      tenant_id: ${TENANT_ID}
+      client_id: ${CLIENT_ID}
+      client_secret: ${CLIENT_SECRET}
+      time_key: TimeGenerated
+      time_generated: true
+      compress: false
+      retry_limit: no_retries
